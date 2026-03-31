@@ -1,11 +1,12 @@
 import tkinter as tk
+from typing import Optional
 
 
 class RoundedButton(tk.Canvas):
     def __init__(
         self,
         parent,
-        text,
+        text="",
         command=None,
         bg_color="#000000",
         fg_color="#FFFFFF",
@@ -13,6 +14,8 @@ class RoundedButton(tk.Canvas):
         height=50,
         corner_radius=20,
         dot=False,
+        font=None,
+        image: Optional[tk.PhotoImage] = None,
     ):
         tk.Canvas.__init__(
             self,
@@ -30,6 +33,10 @@ class RoundedButton(tk.Canvas):
         self.text = text
         self.dot = dot
         self.state = "normal"
+        self.label_font = (
+            font if font is not None else ("Arial", 10, "bold")
+        )
+        self._photo_image: Optional[tk.PhotoImage] = image
 
         # Draw the button
         self.draw_button()
@@ -98,15 +105,22 @@ class RoundedButton(tk.Canvas):
                 outline="#8B0000",
             )
 
-        # Draw text
-        text_x = width // 2 + 5 if self.dot else width // 2
-        self.create_text(
-            text_x,
-            height // 2,
-            text=self.text,
-            fill=current_fg,
-            font=("Arial", 10, "bold"),
-        )
+        # Icon (centered); keep a reference so Tk does not GC the PhotoImage
+        if self._photo_image is not None:
+            self.create_image(
+                width // 2,
+                height // 2,
+                image=self._photo_image,
+            )
+        elif self.text:
+            text_x = width // 2 + 5 if self.dot else width // 2
+            self.create_text(
+                text_x,
+                height // 2,
+                text=self.text,
+                fill=current_fg,
+                font=self.label_font,
+            )
 
     def _adjust_color(self, color, amount):
         """Lighten a hex color by amount"""
@@ -141,6 +155,10 @@ class RoundedButton(tk.Canvas):
             self.dot = kwargs["dot"]
         if "state" in kwargs:
             self.state = kwargs["state"]
+        if "font" in kwargs:
+            self.label_font = kwargs["font"]
+        if "image" in kwargs:
+            self._photo_image = kwargs["image"]
 
         # Redraw the button with new settings
         self.draw_button()

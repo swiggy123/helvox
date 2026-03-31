@@ -8,6 +8,7 @@ from helvox.ui.auto_resize_text import AutoResizingText
 from helvox.ui.button import RoundedButton
 from helvox.ui.rounded_canvas import RoundedCanvas
 from helvox.ui.settings import SettingsDialog
+from helvox.ui.tooltip import add_tooltip
 from helvox.utils.platform import app_font, default_recordings_dir
 from helvox.utils.recorder import Recorder
 
@@ -28,9 +29,12 @@ class App:
         self.setup_window()
         self.setup_ui()
         self.current_id: str | None = None
+        self._nav_back_stack: list[str] = []
 
-        # Show settings dialog on startup
-        self.show_settings()
+        if self._has_saved_config():
+            self._refresh_ui_after_session_change()
+        else:
+            self.show_settings()
 
     def setup_window(self) -> None:
         self.root.title("Helvox")
@@ -47,6 +51,21 @@ class App:
 
         # Bind configure event
         self.root.bind("<Configure>", self.configure_handler)
+
+    @staticmethod
+    def _bind_label_wrap(label: ttk.Label, padding: int = 10) -> None:
+        label.bind(
+            "<Configure>",
+            lambda e: e.widget.configure(wraplength=e.width - padding),
+        )
+
+    def _recorder_identity(self) -> tuple[str, str, str, str]:
+        return (
+            str(self.recorder.output_folder),
+            self.recorder.speaker_id,
+            self.recorder.input_file,
+            self.recorder.speaker_dialect,
+        )
 
     def setup_ui(self) -> None:
         # Main frame
@@ -76,6 +95,7 @@ class App:
             dot=False,
         )
         settings_btn.grid(row=0, column=0, padx=5, sticky="e")
+        add_tooltip(settings_btn, "Open app settings.")
 
         # Text frame
         text_frame = ttk.LabelFrame(main_frame, text="Text", padding="5")
@@ -100,12 +120,7 @@ class App:
             anchor="w",
         )
         de_text_label.grid(row=1, column=0, sticky="ew")
-
-        # update wraplength dynamically
-        de_text_label.bind(
-            "<Configure>",
-            lambda e: e.widget.configure(wraplength=e.width - 10),
-        )
+        self._bind_label_wrap(de_text_label)
 
         # CH
         ch_text_frame = ttk.Frame(text_frame)
@@ -128,12 +143,7 @@ class App:
             anchor="w",
         )
         ch_text_label.grid(row=1, column=0, sticky="ew")
-
-        # update wraplength dynamically
-        ch_text_label.bind(
-            "<Configure>",
-            lambda e: e.widget.configure(wraplength=e.width - 10),
-        )
+        self._bind_label_wrap(ch_text_label)
 
         # CH (Editable)
         ch_text_edit_frame = ttk.Frame(text_frame)
@@ -205,6 +215,7 @@ class App:
             corner_radius=20,
         )
         self.play_btn_full.grid(row=0, column=3, padx=5)
+        add_tooltip(self.play_btn_full, "Play the full take.")
 
         self.duration_text_full = tk.StringVar(value="Full | Duration: 0.0 seconds")
         ttk.Label(recording_frame, textvariable=self.duration_text_full).grid(
@@ -227,6 +238,7 @@ class App:
             corner_radius=20,
         )
         self.play_btn_trimmed.grid(row=2, column=3, padx=5)
+        add_tooltip(self.play_btn_trimmed, "Play the trimmed take.")
 
         self.duration_text_trimmed = tk.StringVar(
             value="Trimmed | Duration: 0.0 seconds"
@@ -235,9 +247,41 @@ class App:
             row=3, column=2, sticky=tk.W, padx=5
         )
 
-        # Record Button
+        # Thumbs + REC: PNG icons (_w = inactive, _b = active); only one active at a time
+        record_controls = ttk.Frame(recording_frame)
+        record_controls.grid(row=4, column=1, columnspan=3, sticky="e", padx=5, pady=5)
+        self._load_thumb_icon_photos()
+
+        self.thumb_up_btn = RoundedButton(
+            record_controls,
+            text="",
+            command=self._select_thumb_up,
+            bg_color="#2E7D4A",
+            fg_color="#FFFFFF",
+            width=self._thumb_btn_w,
+            height=self._thumb_btn_h,
+            corner_radius=20,
+            dot=False,
+            image=self._thumb_photo_up_b,
+        )
+        self.thumb_up_btn.pack(side=tk.LEFT, padx=(0, 4))
+
+        self.thumb_down_btn = RoundedButton(
+            record_controls,
+            text="",
+            command=self._select_thumb_down,
+            bg_color="#E6E6E6",
+            fg_color="#363636",
+            width=self._thumb_btn_w,
+            height=self._thumb_btn_h,
+            corner_radius=20,
+            dot=False,
+            image=self._thumb_photo_down_w,
+        )
+        self.thumb_down_btn.pack(side=tk.LEFT, padx=(0, 8))
+
         self.record_btn = RoundedButton(
-            recording_frame,
+            record_controls,
             text="REC",
             command=self.toggle_recording,
             bg_color="#000000",
@@ -247,7 +291,18 @@ class App:
             corner_radius=20,
             dot=True,
         )
-        self.record_btn.grid(row=4, column=3, padx=5)
+        self.record_btn.pack(side=tk.LEFT)
+
+        self._thumb_choice = "up"
+        add_tooltip(
+            self.thumb_up_btn,
+            "Recording and text are OK.",
+        )
+        add_tooltip(
+            self.thumb_down_btn,
+            "Recording or text is wrong.",
+        )
+        add_tooltip(self.record_btn, "Start or stop recording.")
 
         # Spacer
         ttk.Frame(main_frame).grid(row=4, column=0, sticky="nsew")
@@ -257,20 +312,34 @@ class App:
             row=5, column=0, columnspan=1, sticky="ew", pady=(0, 15)
         )
 
-        # Controls
+        # Controls: duration (left) | Previous, [Skip], Save & Next (right)
         control_frame = ttk.Frame(main_frame)
         control_frame.grid(row=6, column=0, sticky="we", pady=(0, 0))
         control_frame.columnconfigure(0, weight=1)
 
-        # Total duration
         self.duration_text = tk.StringVar(value="Total Duration: 0s")
         ttk.Label(control_frame, textvariable=self.duration_text).grid(
             row=0, column=0, sticky=tk.W, padx=5
         )
 
-        # Skip button at the bottom
+        nav_btn_frame = ttk.Frame(control_frame)
+        nav_btn_frame.grid(row=0, column=1, sticky="e")
+
+        self.prev_btn = RoundedButton(
+            nav_btn_frame,
+            text="Previous",
+            command=self.go_previous,
+            bg_color="#E6E6E6",
+            fg_color="#363636",
+            width=120,
+            height=40,
+            corner_radius=20,
+            dot=False,
+        )
+        self.prev_btn.pack(side=tk.LEFT, padx=5)
+
         self.skip_btn = RoundedButton(
-            control_frame,
+            nav_btn_frame,
             text="Skip",
             command=self.skip,
             bg_color="#E6E6E6",
@@ -280,11 +349,11 @@ class App:
             corner_radius=20,
             dot=False,
         )
-        self.skip_btn.grid(row=0, column=1, padx=5, sticky="e")
+        if self.recorder.enable_skip:
+            self.skip_btn.pack(side=tk.LEFT, padx=5)
 
-        # Next button at the bottom
         self.save_btn = RoundedButton(
-            control_frame,
+            nav_btn_frame,
             text="Save & Next",
             command=self.save,
             bg_color="#3B32B3",
@@ -294,43 +363,97 @@ class App:
             corner_radius=20,
             dot=False,
         )
-        self.save_btn.grid(row=0, column=2, padx=5, sticky="e")
+        self.save_btn.pack(side=tk.LEFT, padx=5)
+
+        add_tooltip(
+            self.prev_btn,
+            "Go to the previous line.",
+        )
+        add_tooltip(
+            self.skip_btn,
+            "Skip this line.",
+        )
+        add_tooltip(
+            self.save_btn,
+            "Save and go to the next line.",
+        )
+
+    @staticmethod
+    def _fit_photo(
+        path: Path,
+        *,
+        max_width: int | None = None,
+        max_height: int | None = 40,
+    ) -> tk.PhotoImage:
+        """Scale down a PNG to fit within the requested bounds."""
+        photo = tk.PhotoImage(file=str(path))
+        width = photo.width()
+        height = photo.height()
+
+        step_x = 1
+        step_y = 1
+        if max_width is not None and width > max_width:
+            step_x = max(2, (width + max_width - 1) // max_width)
+        if max_height is not None and height > max_height:
+            step_y = max(2, (height + max_height - 1) // max_height)
+
+        if step_x == 1 and step_y == 1:
+            return photo
+        return photo.subsample(step_x, step_y)
+
+    def _load_thumb_icon_photos(self) -> None:
+        icon_dir = Path(__file__).resolve().parent / "resources" / "icons"
+        self._thumb_photo_up_w = self._fit_photo(
+            icon_dir / "thumbs_up_w.png", max_width=20, max_height=20
+        )
+        self._thumb_photo_up_b = self._fit_photo(
+            icon_dir / "thumbs_up_b.png", max_width=20, max_height=20
+        )
+        self._thumb_photo_down_w = self._fit_photo(
+            icon_dir / "thumbs_down_w.png", max_width=20, max_height=20
+        )
+        self._thumb_photo_down_b = self._fit_photo(
+            icon_dir / "thumbs_down_b.png", max_width=20, max_height=20
+        )
+        self._thumb_btn_w = 40
+        self._thumb_btn_h = 40
+
+    def _apply_settings_result(self, result: dict) -> None:
+        before = self._recorder_identity()
+
+        self.recorder.update_output_folder(result["output_folder"])
+        self.recorder.update_selected_device(result["device"])
+        self.recorder.speaker_id = result["speaker_id"]
+        self.recorder.speaker_dialect = result["speaker_dialect"]
+        self.recorder.enable_skip = result.get("enable_skip", False)
+        self.recorder.input_file = result["input_file"]
+
+        speaker_dir = Path(result["output_folder"]) / result["speaker_id"]
+        self.recorder.output_file = speaker_dir / "output.json"
+        self.recorder.skipped_file = speaker_dir / "skipped.txt"
+
+        if before != self._recorder_identity():
+            self.recorder.load_data()
+            self.current_id = None
+            self._nav_back_stack.clear()
 
     def show_settings(self) -> None:
         dialog = SettingsDialog(self.root, self.recorder)
         result = dialog.show()
 
         if result:
-            before = (
-                str(self.recorder.output_folder),
-                self.recorder.speaker_id,
-                self.recorder.input_file,
-                self.recorder.speaker_dialect,
-            )
-            self.recorder.update_output_folder(result["output_folder"])
-            self.recorder.update_selected_device(result["device"])
-            self.recorder.speaker_id = result["speaker_id"]
-            self.recorder.speaker_dialect = result["speaker_dialect"]
-            self.recorder.enable_skip = result.get("enable_skip", False)
-            self.recorder.input_file = result["input_file"]
-            self.recorder.output_file = (
-                Path(result["output_folder"]) / result["speaker_id"] / "output.json"
-            )
-            self.recorder.skipped_file = (
-                Path(result["output_folder"]) / result["speaker_id"] / "skipped.txt"
-            )
-            after = (
-                str(self.recorder.output_folder),
-                self.recorder.speaker_id,
-                self.recorder.input_file,
-                self.recorder.speaker_dialect,
-            )
-            if before != after:
-                self.recorder.load_data()
-                self.current_id = None
-
+            self._apply_settings_result(result)
             self.recorder.save_settings(self.settings_path)
 
+        self._refresh_ui_after_session_change()
+
+    def _has_saved_config(self) -> bool:
+        return self.settings_path.exists() or self.settings_path.with_suffix(
+            ".ini"
+        ).exists()
+
+    def _refresh_ui_after_session_change(self) -> None:
+        self.recorder.refresh_audio_devices()
         if self.current_id is None:
             self.load_next_sample()
         else:
@@ -444,37 +567,89 @@ class App:
         self.waveform_canvas_full.draw_canvas()
         self.waveform_canvas_trimmed.draw_canvas()
 
+    def _set_thumb_choice(self, choice: str) -> None:
+        self._thumb_choice = choice
+        self._sync_thumb_buttons()
+
+    def _select_thumb_up(self) -> None:
+        self._set_thumb_choice("up")
+
+    def _select_thumb_down(self) -> None:
+        self._set_thumb_choice("down")
+
+    def _sync_thumb_buttons(self) -> None:
+        """One thumb active (_b icon + highlight); the other inactive (_w)."""
+        if self._thumb_choice == "up":
+            self.thumb_up_btn.config(
+                image=self._thumb_photo_up_b,
+                bg_color="#2E7D4A",
+                fg_color="#FFFFFF",
+            )
+            self.thumb_down_btn.config(
+                image=self._thumb_photo_down_w,
+                bg_color="#E6E6E6",
+                fg_color="#363636",
+            )
+        else:
+            self.thumb_up_btn.config(
+                image=self._thumb_photo_up_w,
+                bg_color="#E6E6E6",
+                fg_color="#363636",
+            )
+            self.thumb_down_btn.config(
+                image=self._thumb_photo_down_b,
+                bg_color="#B00020",
+                fg_color="#FFFFFF",
+            )
+
+    def _get_sample_ch_text(self, sample: dict) -> str:
+        if "ch" in sample:
+            return sample["ch"]
+        return sample[f"ch_{self.recorder.speaker_dialect.lower()}"]
+
     def _apply_sample_fields(self) -> None:
         if not self.current_id:
             return
 
         sample = self.recorder.get_sample_by_id(self.current_id)
         text_de = sample["de"]
-        if "ch" in sample:
-            text_ch = sample["ch"]
-        else:
-            text_ch = sample[f"ch_{self.recorder.speaker_dialect.lower()}"]
+        text_ch = self._get_sample_ch_text(sample)
 
         self.de_text_var.set(text_de)
         self.ch_text_var.set(text_ch)
         self.ch_text_edit_var.set(text_ch)
+
+        id_str = str(self.current_id)
+        if id_str in self.recorder.output_index:
+            self._thumb_choice = self.recorder.output_index[id_str].get("thumb", "up")
+        else:
+            self._thumb_choice = "up"
+        self._sync_thumb_buttons()
+
         self.update_progress()
         self.update_navigation_controls()
 
     def load_next_sample(self) -> None:
+        prev = self.current_id
         self.current_id = self.recorder.get_next_id()
         if self.current_id is None:
             self.show_done_state()
             return
 
+        if prev is not None:
+            self._nav_back_stack.append(str(prev))
+
         self._apply_sample_fields()
 
     def show_done_state(self) -> None:
         self.current_id = None
+        self._nav_back_stack.clear()
         self.de_text_var.set("")
         self.ch_text_var.set("")
         self.ch_text_edit_var.set("")
         self.clear_waveform_canvas()
+        self._thumb_choice = "up"
+        self._sync_thumb_buttons()
         self.update_progress()
         self.update_navigation_controls()
 
@@ -492,8 +667,45 @@ class App:
         self.save_btn.set_state("normal" if has_current else "disabled")
         self.record_btn.set_state("normal" if has_current else "disabled")
 
-        can_skip = has_current and self.recorder.enable_skip
-        self.skip_btn.set_state("normal" if can_skip else "disabled")
+        can_prev = has_current and bool(self._nav_back_stack)
+        self.prev_btn.set_state("normal" if can_prev else "disabled")
+
+        thumb_state = "normal" if has_current else "disabled"
+        self.thumb_up_btn.set_state(thumb_state)
+        self.thumb_down_btn.set_state(thumb_state)
+
+        if self.recorder.enable_skip:
+            if self.skip_btn.winfo_manager() == "":
+                self.skip_btn.pack(side=tk.LEFT, padx=5, before=self.save_btn)
+            self.skip_btn.set_state("normal" if has_current else "disabled")
+        else:
+            if self.skip_btn.winfo_manager() != "":
+                self.skip_btn.pack_forget()
+
+    def _draw_waveform_bars(
+        self,
+        canvas: RoundedCanvas,
+        waveform: list[float],
+        width: int,
+        height: int,
+    ) -> None:
+        center_y = height // 2
+        bar_width = max(1, width // len(waveform) // 2)
+        for i, value in enumerate(waveform):
+            x = int((i / len(waveform)) * width)
+            bar_height = int(value * (height / 2))
+            if bar_height == 0:
+                continue
+            canvas.create_line(
+                x,
+                center_y - bar_height,
+                x,
+                center_y + bar_height,
+                fill="orange red",
+                width=bar_width,
+                capstyle=tk.ROUND,
+                joinstyle=tk.ROUND,
+            )
 
     def update_waveform(self) -> None:
         if self.recorder.full_audio is None or self.recorder.trimmed_audio is None:
@@ -515,48 +727,15 @@ class App:
         # Get canvas dimensions
         width = self.waveform_canvas_full.winfo_width()
         height = self.waveform_canvas_full.winfo_height()
-        center_y = height // 2
-
         # Clear canvas
         self.clear_waveform_canvas()
 
-        # Draw vertical bars (full)
-        bar_width = max(1, width // len(waveform_full) // 2)
-        for i, value in enumerate(waveform_full):
-            x = int((i / len(waveform_full)) * width)
-            # Scale the value to half the height (since we're drawing from center)
-            bar_height = int(value * (height / 2))
-            # Draw vertical bar centered at center_y
-            if bar_height != 0:  # Only draw if there's a visible amplitude
-                self.waveform_canvas_full.create_line(
-                    x,
-                    center_y - bar_height,
-                    x,
-                    center_y + bar_height,
-                    fill="orange red",
-                    width=bar_width,
-                    capstyle=tk.ROUND,
-                    joinstyle=tk.ROUND,
-                )
-
-        # Draw vertical bars (trimmed)
-        bar_width = max(1, width // len(waveform_trimmed) // 2)
-        for i, value in enumerate(waveform_trimmed):
-            x = int((i / len(waveform_trimmed)) * width)
-            # Scale the value to half the height (since we're drawing from center)
-            bar_height = int(value * (height / 2))
-            # Draw vertical bar centered at center_y
-            if bar_height != 0:  # Only draw if there's a visible amplitude
-                self.waveform_canvas_trimmed.create_line(
-                    x,
-                    center_y - bar_height,
-                    x,
-                    center_y + bar_height,
-                    fill="orange red",
-                    width=bar_width,
-                    capstyle=tk.ROUND,
-                    joinstyle=tk.ROUND,
-                )
+        self._draw_waveform_bars(
+            self.waveform_canvas_full, waveform_full, width, height
+        )
+        self._draw_waveform_bars(
+            self.waveform_canvas_trimmed, waveform_trimmed, width, height
+        )
 
     def configure_handler(self, event):
         self.update_waveform()
@@ -573,6 +752,7 @@ class App:
             dialect=self.recorder.speaker_dialect,
             audio_path=f"{self.current_id}.flac",
             duration_s=duration_s,
+            thumb=self._thumb_choice,
         )
 
         self.recorder.audio_data = []
@@ -584,6 +764,20 @@ class App:
         self.update_duration()
         self.load_next_sample()
         self.recorder.save_settings(self.settings_path)
+
+    def go_previous(self) -> None:
+        if not self._nav_back_stack or self.current_id is None:
+            return
+        if self.recorder.recording:
+            self.toggle_recording()
+
+        self.recorder.open_ids.insert(0, str(self.current_id))
+        prev_id = self._nav_back_stack.pop()
+        if str(prev_id) in self.recorder.skipped_ids:
+            self.recorder.remove_skip(prev_id)
+
+        self.current_id = str(prev_id)
+        self._apply_sample_fields()
 
     def skip(self):
         if self.current_id is None or not self.recorder.enable_skip:

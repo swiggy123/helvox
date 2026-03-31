@@ -3,6 +3,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from helvox.ui.tooltip import add_tooltip
 from helvox.utils.data import validate_samples_for_dialect
 from helvox.utils.platform import app_font
 from helvox.utils.recorder import Recorder
@@ -147,7 +148,7 @@ class SettingsDialog:
         file_display_frame.columnconfigure(0, weight=1)
 
         self.file_var = tk.StringVar(value=str(self.recorder.input_file))
-        folder_label = ttk.Label(
+        file_path_label = ttk.Label(
             file_display_frame,
             textvariable=self.file_var,
             wraplength=500,
@@ -157,7 +158,7 @@ class SettingsDialog:
             font=app_font(9),
             padding=5,
         )
-        folder_label.grid(row=0, column=0, sticky="ew")
+        file_path_label.grid(row=0, column=0, sticky="ew")
 
         # Browse button
         browse_file_btn = ttk.Button(
@@ -196,7 +197,7 @@ class SettingsDialog:
         folder_display_frame.columnconfigure(0, weight=1)
 
         self.folder_var = tk.StringVar(value=str(self.recorder.output_folder))
-        folder_label = ttk.Label(
+        output_folder_label = ttk.Label(
             folder_display_frame,
             textvariable=self.folder_var,
             wraplength=500,
@@ -206,7 +207,7 @@ class SettingsDialog:
             font=app_font(9),
             padding=5,
         )
-        folder_label.grid(row=0, column=0, sticky="ew")
+        output_folder_label.grid(row=0, column=0, sticky="ew")
 
         # Browse button
         browse_btn = ttk.Button(
@@ -287,6 +288,39 @@ class SettingsDialog:
 
         # Set focus to OK button
         ok_btn.focus_set()
+
+        add_tooltip(
+            self.speaker_input,
+            "Your speaker ID (e.g. name, short name, nickname, or whatever).",
+        )
+        add_tooltip(
+            self.speaker_dialect,
+            "Your spoken dialect.",
+        )
+        add_tooltip(
+            file_path_label,
+            "Input JSON with the lines to record.",
+        )
+        add_tooltip(browse_file_btn, "Choose the input JSON file.")
+        add_tooltip(
+            output_folder_label,
+            "Base folder for recordings and output files.",
+        )
+        add_tooltip(
+            browse_btn,
+            "Choose the output folder.",
+        )
+        add_tooltip(
+            enable_skip_check,
+            "Show the Skip button in the main window.",
+        )
+        add_tooltip(
+            self.device_combo,
+            "Audio input used for recording.",
+        )
+        add_tooltip(refresh_btn, "Reload audio devices.")
+        add_tooltip(cancel_btn, "Close without saving changes.")
+        add_tooltip(ok_btn, "Save and apply these settings.")
 
     def select_folder(self) -> None:
         """Open folder selection dialog."""

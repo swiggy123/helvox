@@ -1,7 +1,7 @@
 import json
 from configparser import ConfigParser
 from pathlib import Path
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 import numpy as np
 import sounddevice as sd
@@ -372,6 +372,23 @@ class Recorder:
         with open(self.skipped_file, mode="a", encoding="utf-8") as f:
             f.write(f"{id}\n")
 
+    def remove_skip(self, id: Union[int, str]) -> None:
+        id_str = str(id)
+        if id_str not in self.skipped_ids:
+            return
+        self.skipped_ids = [x for x in self.skipped_ids if str(x) != id_str]
+        self._write_skipped_file()
+
+    def _write_skipped_file(self) -> None:
+        if not self.skipped_file or len(str(self.skipped_file)) == 0:
+            return
+        parent = Path(self.skipped_file).parent
+        if not parent.exists():
+            parent.mkdir(parents=True, exist_ok=True)
+        with open(self.skipped_file, mode="w", encoding="utf-8") as f:
+            for x in self.skipped_ids:
+                f.write(f"{x}\n")
+
     def add_sample(
         self,
         id: str,
@@ -380,17 +397,29 @@ class Recorder:
         dialect: str,
         audio_path: str,
         duration_s: float,
+        thumb: str = "up",
     ) -> None:
-        sample = {
+        sample: dict[str, Any] = {
             "id": id,
             "de": text_de,
             "ch": text_ch,
             "dialect": dialect.lower(),
             "audio": audio_path,
             "duration_s": duration_s,
+            "thumb": thumb,
         }
 
-        self.output_data.append(sample)
+        id_str = str(id)
+        replaced = False
+        for i, row in enumerate(self.output_data):
+            if str(row.get("id")) == id_str:
+                self.output_data[i] = sample
+                replaced = True
+                break
+        if not replaced:
+            self.output_data.append(sample)
+
+        self.output_index[id_str] = sample
 
         if not Path(self.output_file).parent.exists():
             Path(self.output_file).parent.mkdir(parents=True, exist_ok=True)
