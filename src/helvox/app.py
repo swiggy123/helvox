@@ -29,7 +29,6 @@ class App:
         self.setup_window()
         self.setup_ui()
         self.current_id: str | None = None
-        self._nav_back_stack: list[str] = []
 
         if self._has_saved_config():
             self._refresh_ui_after_session_change()
@@ -435,7 +434,6 @@ class App:
         if before != self._recorder_identity():
             self.recorder.load_data()
             self.current_id = None
-            self._nav_back_stack.clear()
 
     def show_settings(self) -> None:
         dialog = SettingsDialog(self.root, self.recorder)
@@ -636,20 +634,15 @@ class App:
         self.update_navigation_controls()
 
     def load_next_sample(self) -> None:
-        prev = self.current_id
         self.current_id = self.recorder.get_next_id()
         if self.current_id is None:
             self.show_done_state()
             return
 
-        if prev is not None:
-            self._nav_back_stack.append(str(prev))
-
         self._apply_sample_fields()
 
     def show_done_state(self) -> None:
         self.current_id = None
-        self._nav_back_stack.clear()
         self.de_text_var.set("")
         self.ch_text_var.set("")
         self.ch_text_edit_var.set("")
@@ -658,6 +651,16 @@ class App:
         self._sync_thumb_buttons()
         self.update_progress()
         self.update_navigation_controls()
+
+    def _current_input_line_index(self) -> int | None:
+        """0-based index of current_id in input_data order, or None if unknown."""
+        if not self.current_id:
+            return None
+        cid = str(self.current_id)
+        for i, s in enumerate(self.recorder.input_data):
+            if str(s["id"]) == cid:
+                return i
+        return None
 
     def update_progress(self) -> None:
         total_count = len(self.recorder.input_data)
@@ -688,7 +691,8 @@ class App:
         self.save_btn.set_state("normal" if has_current else "disabled")
         self.record_btn.set_state("normal" if has_current else "disabled")
 
-        can_prev = has_current and bool(self._nav_back_stack)
+        idx = self._current_input_line_index()
+        can_prev = has_current and idx is not None and idx > 0
         self.prev_btn.set_state("normal" if can_prev else "disabled")
 
         thumb_state = "normal" if has_current else "disabled"
@@ -787,17 +791,20 @@ class App:
         self.recorder.save_settings(self.settings_path)
 
     def go_previous(self) -> None:
-        if not self._nav_back_stack or self.current_id is None:
+        if self.current_id is None:
+            return
+        idx = self._current_input_line_index()
+        if idx is None or idx == 0:
             return
         if self.recorder.recording:
             self.toggle_recording()
 
         self.recorder.open_ids.insert(0, str(self.current_id))
-        prev_id = self._nav_back_stack.pop()
-        if str(prev_id) in self.recorder.skipped_ids:
+        prev_id = str(self.recorder.input_data[idx - 1]["id"])
+        if prev_id in self.recorder.skipped_ids:
             self.recorder.remove_skip(prev_id)
 
-        self.current_id = str(prev_id)
+        self.current_id = prev_id
         self._apply_sample_fields()
 
     def skip(self):
