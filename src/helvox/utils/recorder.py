@@ -134,6 +134,8 @@ class Recorder:
 
         self.recording = True
         self.audio_data = []
+        self.full_audio = None
+        self.trimmed_audio = None
 
         def callback(indata: np.ndarray, frames, time, status: CallbackFlags):
             if status:
@@ -181,6 +183,41 @@ class Recorder:
         sf.write(audio_path, self.trimmed_audio, self.sample_rate, format="FLAC")
 
         return self.get_duration_trimmed_audio()
+
+    def load_saved_clip_for_sample(self, sample_id: Union[int, str]) -> None:
+        """Load trimmed FLAC from disk when this line was saved; else clear buffers."""
+        id_str = str(sample_id)
+        self.audio_data = []
+
+        if id_str not in self.output_index:
+            self.full_audio = None
+            self.trimmed_audio = None
+            return
+
+        audio_name = self.output_index[id_str].get("audio", "")
+        if not audio_name:
+            self.full_audio = None
+            self.trimmed_audio = None
+            return
+
+        path = self.output_folder / self.speaker_id / "audio" / Path(audio_name).name
+        if not path.is_file():
+            self.full_audio = None
+            self.trimmed_audio = None
+            return
+
+        try:
+            data, _ = sf.read(str(path), always_2d=True, dtype="float32")
+        except OSError:
+            self.full_audio = None
+            self.trimmed_audio = None
+            return
+
+        if data.shape[1] > 1:
+            data = np.mean(data, axis=1, keepdims=True)
+
+        self.trimmed_audio = np.ascontiguousarray(data)
+        self.full_audio = self.trimmed_audio.copy()
 
     def play_audio_data_full_audio(self):
         self.play_audio_data(self.full_audio)

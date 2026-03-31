@@ -626,6 +626,12 @@ class App:
             self._thumb_choice = "up"
         self._sync_thumb_buttons()
 
+        self.recorder.load_saved_clip_for_sample(id_str)
+        if self.recorder.full_audio is None:
+            self.clear_waveform_canvas()
+        else:
+            self.update_waveform()
+
         self.update_progress()
         self.update_navigation_controls()
 
@@ -655,12 +661,27 @@ class App:
 
     def update_progress(self) -> None:
         total_count = len(self.recorder.input_data)
-        done_count = len(self.recorder.output_data) + len(self.recorder.skipped_ids)
-        done_count = min(done_count, total_count)
-        self.progress_text.set(f"Progress: {done_count} / {total_count}")
+        if total_count == 0:
+            self.progress_text.set("Progress: 0 / 0")
+            self.progress_bar["maximum"] = 1
+            self.progress_bar["value"] = 0
+            return
 
-        self.progress_bar["maximum"] = max(total_count, 1)
-        self.progress_bar["value"] = done_count
+        if self.current_id is not None:
+            ids_ordered = [str(s["id"]) for s in self.recorder.input_data]
+            try:
+                line_no = ids_ordered.index(str(self.current_id)) + 1
+            except ValueError:
+                line_no = 0
+            self.progress_text.set(f"Line {line_no} / {total_count}")
+            self.progress_bar["maximum"] = total_count
+            self.progress_bar["value"] = line_no
+        else:
+            done_count = len(self.recorder.output_data) + len(self.recorder.skipped_ids)
+            done_count = min(done_count, total_count)
+            self.progress_text.set(f"Progress: {done_count} / {total_count}")
+            self.progress_bar["maximum"] = max(total_count, 1)
+            self.progress_bar["value"] = done_count
 
     def update_navigation_controls(self) -> None:
         has_current = self.current_id is not None
