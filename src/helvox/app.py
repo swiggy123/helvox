@@ -21,11 +21,13 @@ class App:
         )
 
         self.settings_path = (
-            user_config_path(appname="helvox", appauthor="noxenum") / "config.ini"
+            user_config_path(appname="helvox", appauthor="noxenum") / "config.json"
         )
+        self.recorder.load_settings(self.settings_path)
 
         self.setup_window()
         self.setup_ui()
+        self.current_id: str | None = None
 
         # Show settings dialog on startup
         self.show_settings()
@@ -54,7 +56,7 @@ class App:
         # Configure grid weights for responsiveness
         self.root.rowconfigure(0, weight=1)
         self.root.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(2, weight=1)  # Allow spacing before buttons
+        main_frame.rowconfigure(4, weight=1)  # Allow spacing before buttons
         main_frame.columnconfigure(0, weight=1)
 
         # Settings button at the top
@@ -157,9 +159,24 @@ class App:
         )
         self.speaker_input.grid(row=1, column=0, padx=(0, 0), pady=8, sticky="ew")
 
+        # Progress frame
+        progress_frame = ttk.Frame(main_frame)
+        progress_frame.grid(row=2, column=0, sticky="we", pady=(0, 5), padx=5)
+        progress_frame.columnconfigure(0, weight=1)
+
+        self.progress_text = tk.StringVar(value="Progress: 0 / 0")
+        ttk.Label(progress_frame, textvariable=self.progress_text).grid(
+            row=0, column=0, sticky=tk.W
+        )
+
+        self.progress_bar = ttk.Progressbar(
+            progress_frame, orient="horizontal", mode="determinate"
+        )
+        self.progress_bar.grid(row=1, column=0, sticky="ew", pady=(3, 0))
+
         # Recording frame
         recording_frame = ttk.LabelFrame(main_frame, text="Recording", padding="5")
-        recording_frame.grid(row=2, column=0, sticky="we", pady=5, padx=5)
+        recording_frame.grid(row=3, column=0, sticky="we", pady=5, padx=5)
 
         # Configure recording frame columns - column 2 expands
         recording_frame.columnconfigure(2, weight=1)
@@ -233,16 +250,16 @@ class App:
         self.record_btn.grid(row=4, column=3, padx=5)
 
         # Spacer
-        ttk.Frame(main_frame).grid(row=3, column=0, sticky="nsew")
+        ttk.Frame(main_frame).grid(row=4, column=0, sticky="nsew")
 
         # Button frame with separator
         ttk.Separator(main_frame, orient="horizontal").grid(
-            row=3, column=0, columnspan=2, sticky="ew", pady=(0, 15)
+            row=5, column=0, columnspan=1, sticky="ew", pady=(0, 15)
         )
 
         # Controls
         control_frame = ttk.Frame(main_frame)
-        control_frame.grid(row=4, column=0, sticky="we", pady=(0, 0))
+        control_frame.grid(row=6, column=0, sticky="we", pady=(0, 0))
         control_frame.columnconfigure(0, weight=1)
 
         # Total duration
@@ -252,7 +269,7 @@ class App:
         )
 
         # Skip button at the bottom
-        settings_btn = RoundedButton(
+        self.skip_btn = RoundedButton(
             control_frame,
             text="Skip",
             command=self.skip,
@@ -263,10 +280,10 @@ class App:
             corner_radius=20,
             dot=False,
         )
-        settings_btn.grid(row=0, column=1, padx=5, sticky="e")
+        self.skip_btn.grid(row=0, column=1, padx=5, sticky="e")
 
         # Next button at the bottom
-        settings_btn = RoundedButton(
+        self.save_btn = RoundedButton(
             control_frame,
             text="Save & Next",
             command=self.save,
@@ -277,19 +294,24 @@ class App:
             corner_radius=20,
             dot=False,
         )
-        settings_btn.grid(row=0, column=2, padx=5, sticky="e")
+        self.save_btn.grid(row=0, column=2, padx=5, sticky="e")
 
     def show_settings(self) -> None:
-        self.recorder.load_settings(self.settings_path)
         dialog = SettingsDialog(self.root, self.recorder)
         result = dialog.show()
 
         if result:
-            # Apply settings
+            before = (
+                str(self.recorder.output_folder),
+                self.recorder.speaker_id,
+                self.recorder.input_file,
+                self.recorder.speaker_dialect,
+            )
             self.recorder.update_output_folder(result["output_folder"])
             self.recorder.update_selected_device(result["device"])
             self.recorder.speaker_id = result["speaker_id"]
             self.recorder.speaker_dialect = result["speaker_dialect"]
+            self.recorder.enable_skip = result.get("enable_skip", False)
             self.recorder.input_file = result["input_file"]
             self.recorder.output_file = (
                 Path(result["output_folder"]) / result["speaker_id"] / "output.json"
@@ -297,13 +319,25 @@ class App:
             self.recorder.skipped_file = (
                 Path(result["output_folder"]) / result["speaker_id"] / "skipped.txt"
             )
+            after = (
+                str(self.recorder.output_folder),
+                self.recorder.speaker_id,
+                self.recorder.input_file,
+                self.recorder.speaker_dialect,
+            )
+            if before != after:
+                self.recorder.load_data()
+                self.current_id = None
 
             self.recorder.save_settings(self.settings_path)
-            self.recorder.load_data()
 
+        if self.current_id is None:
+            self.load_next_sample()
+        else:
+            self.update_navigation_controls()
+
+        self.recorder.stop_monitoring()
         self.start_monitoring()
-        self.load_next_sample()
-
         self.update_duration()
 
     def update_duration(self) -> None:
@@ -410,14 +444,12 @@ class App:
         self.waveform_canvas_full.draw_canvas()
         self.waveform_canvas_trimmed.draw_canvas()
 
-    def load_next_sample(self) -> None:
-        self.current_id = self.recorder.get_next_id()
-        if self.current_id is None:
+    def _apply_sample_fields(self) -> None:
+        if not self.current_id:
             return
 
         sample = self.recorder.get_sample_by_id(self.current_id)
         text_de = sample["de"]
-
         if "ch" in sample:
             text_ch = sample["ch"]
         else:
@@ -426,6 +458,42 @@ class App:
         self.de_text_var.set(text_de)
         self.ch_text_var.set(text_ch)
         self.ch_text_edit_var.set(text_ch)
+        self.update_progress()
+        self.update_navigation_controls()
+
+    def load_next_sample(self) -> None:
+        self.current_id = self.recorder.get_next_id()
+        if self.current_id is None:
+            self.show_done_state()
+            return
+
+        self._apply_sample_fields()
+
+    def show_done_state(self) -> None:
+        self.current_id = None
+        self.de_text_var.set("")
+        self.ch_text_var.set("")
+        self.ch_text_edit_var.set("")
+        self.clear_waveform_canvas()
+        self.update_progress()
+        self.update_navigation_controls()
+
+    def update_progress(self) -> None:
+        total_count = len(self.recorder.input_data)
+        done_count = len(self.recorder.output_data) + len(self.recorder.skipped_ids)
+        done_count = min(done_count, total_count)
+        self.progress_text.set(f"Progress: {done_count} / {total_count}")
+
+        self.progress_bar["maximum"] = max(total_count, 1)
+        self.progress_bar["value"] = done_count
+
+    def update_navigation_controls(self) -> None:
+        has_current = self.current_id is not None
+        self.save_btn.set_state("normal" if has_current else "disabled")
+        self.record_btn.set_state("normal" if has_current else "disabled")
+
+        can_skip = has_current and self.recorder.enable_skip
+        self.skip_btn.set_state("normal" if can_skip else "disabled")
 
     def update_waveform(self) -> None:
         if self.recorder.full_audio is None or self.recorder.trimmed_audio is None:
@@ -494,7 +562,7 @@ class App:
         self.update_waveform()
 
     def save(self) -> None:
-        if self.recorder.trimmed_audio is None:
+        if self.current_id is None or self.recorder.trimmed_audio is None:
             return
 
         duration_s = self.recorder.save_audio(self.current_id)
@@ -515,14 +583,19 @@ class App:
 
         self.update_duration()
         self.load_next_sample()
+        self.recorder.save_settings(self.settings_path)
 
     def skip(self):
+        if self.current_id is None or not self.recorder.enable_skip:
+            return
+
         self.recorder.add_skip(self.current_id)
         self.load_next_sample()
+        self.recorder.save_settings(self.settings_path)
 
     def on_closing(self) -> None:
+        self.recorder.save_settings(self.settings_path)
         self.recorder.stop_monitoring()
         if self.recorder.recording:
             self.recorder.stop_recording()
-        self.root.destroy()
         self.root.destroy()

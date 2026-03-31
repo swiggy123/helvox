@@ -1,7 +1,9 @@
+import json
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from helvox.utils.data import validate_samples_for_dialect
 from helvox.utils.platform import app_font
 from helvox.utils.recorder import Recorder
 
@@ -17,12 +19,7 @@ class SettingsDialog:
         self.dialog.geometry("650x550")
         self.dialog.resizable(False, False)
 
-        # Make it modal
         self.dialog.transient(parent)
-        self.dialog.grab_set()
-
-        # Center the dialog
-        self.center_dialog(parent)
 
         # Set app icon
         icon_path = Path(__file__).parent.parent / "resources" / "icons" / "app.png"
@@ -33,6 +30,12 @@ class SettingsDialog:
         # Configure style
         self.setup_styles()
         self.setup_ui()
+
+        # Center after content exists; grab only once the window is viewable
+        self.center_dialog(parent)
+        self.dialog.update_idletasks()
+        self.dialog.wait_visibility()
+        self.dialog.grab_set()
 
         # Handle window close button
         self.dialog.protocol("WM_DELETE_WINDOW", self.on_cancel)
@@ -170,6 +173,18 @@ class SettingsDialog:
         )
         info_label.grid(row=1, column=0, sticky="w", pady=(5, 0))
 
+        options_frame = ttk.LabelFrame(tab_data, text="Options", padding="15")
+        options_frame.grid(row=2, column=0, sticky="ew", padx=(10, 10), pady=(10, 0))
+        options_frame.columnconfigure(0, weight=1)
+
+        self.enable_skip_var = tk.BooleanVar(value=self.recorder.enable_skip)
+        enable_skip_check = ttk.Checkbutton(
+            options_frame,
+            text="Enable Skip button",
+            variable=self.enable_skip_var,
+        )
+        enable_skip_check.grid(row=0, column=0, sticky="w")
+
         # Output Folder Selection
         folder_frame = ttk.LabelFrame(tab_data, text="Output Folder", padding="15")
         folder_frame.grid(row=1, column=0, sticky="ew", padx=(10, 10), pady=(10, 0))
@@ -288,7 +303,6 @@ class SettingsDialog:
 
         if file:
             self.file_var.set(str(Path(file)))
-            self.recorder.input_file = file
 
     def refresh_devices(self) -> None:
         """Refresh available audio devices."""
@@ -332,6 +346,40 @@ class SettingsDialog:
             self.device_combo.focus_set()
             return False
 
+        input_path = Path(self.file_var.get())
+        if not input_path.exists():
+            messagebox.showwarning(
+                "Invalid Input File",
+                "The selected input JSON file does not exist.",
+                parent=self.dialog,
+            )
+            return False
+
+        try:
+            with open(input_path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            messagebox.showwarning(
+                "Invalid Input File",
+                f"Could not read JSON: {e}",
+                parent=self.dialog,
+            )
+            return False
+
+        if not isinstance(data, list):
+            messagebox.showwarning(
+                "Invalid Input File",
+                "The input file must be a JSON array of objects.",
+                parent=self.dialog,
+            )
+            return False
+
+        dialect = self.dialect_var.get()
+        err = validate_samples_for_dialect(data, dialect)
+        if err:
+            messagebox.showwarning("Invalid Input File", err, parent=self.dialog)
+            return False
+
         return True
 
     def on_ok(self) -> None:
@@ -344,6 +392,7 @@ class SettingsDialog:
             "speaker_dialect": self.dialect_var.get(),
             "output_folder": self.folder_var.get(),
             "device": self.device_var.get(),
+            "enable_skip": self.enable_skip_var.get(),
             "input_file": self.file_var.get(),
         }
         self.dialog.destroy()

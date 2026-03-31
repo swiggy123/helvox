@@ -1,5 +1,5 @@
-import configparser
 import json
+from configparser import ConfigParser
 from pathlib import Path
 from typing import Optional, Union
 
@@ -36,6 +36,7 @@ class Recorder:
         self.selected_device = ""
         self.speaker_id = "unknown"
         self.speaker_dialect = "AG"
+        self.enable_skip = False
         self.input_file = ""
         self.output_file = ""
         self.skipped_file = ""
@@ -255,33 +256,52 @@ class Recorder:
         if not config_path.parent.exists():
             config_path.parent.mkdir(parents=True, exist_ok=True)
 
-        config = configparser.ConfigParser()
-        config["Settings"] = {
+        payload = {
             "output_folder": str(self.output_folder),
             "selected_device": self.selected_device,
             "speaker_id": self.speaker_id,
             "speaker_dialect": self.speaker_dialect,
+            "enable_skip": self.enable_skip,
             "input_file": self.input_file,
         }
 
-        with open(config_path, "w") as configfile:
-            config.write(configfile)
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    def _migrate_ini_to_dict(self, ini_path: Path) -> dict[str, object]:
+        config = ConfigParser()
+        config.read(ini_path)
+        settings = config["Settings"]
+        return {
+            "output_folder": settings.get("output_folder", str(self.output_folder)),
+            "selected_device": settings.get("selected_device", self.selected_device),
+            "speaker_id": settings.get("speaker_id", self.speaker_id),
+            "speaker_dialect": settings.get("speaker_dialect", self.speaker_dialect),
+            "enable_skip": settings.getboolean(
+                "enable_skip", fallback=self.enable_skip
+            ),
+            "input_file": settings.get("input_file", self.input_file),
+        }
 
     def load_settings(self, config_path: Path) -> None:
-        if not config_path.exists():
+        data = None
+        if config_path.exists():
+            with open(config_path, encoding="utf-8") as f:
+                data = json.load(f)
+        else:
+            ini_path = config_path.with_suffix(".ini")
+            if ini_path.exists():
+                data = self._migrate_ini_to_dict(ini_path)
+
+        if not data:
             return
 
-        config = configparser.ConfigParser()
-        config.read(config_path)
-
-        settings = config["Settings"]
-        self.output_folder = Path(
-            settings.get("output_folder", str(self.output_folder))
-        )
-        self.selected_device = settings.get("selected_device", self.selected_device)
-        self.speaker_id = settings.get("speaker_id", self.speaker_id)
-        self.speaker_dialect = settings.get("speaker_dialect", self.speaker_dialect)
-        self.input_file = settings.get("input_file", self.input_file)
+        self.output_folder = Path(data.get("output_folder", str(self.output_folder)))
+        self.selected_device = data.get("selected_device", self.selected_device)
+        self.speaker_id = data.get("speaker_id", self.speaker_id)
+        self.speaker_dialect = data.get("speaker_dialect", self.speaker_dialect)
+        self.enable_skip = bool(data.get("enable_skip", self.enable_skip))
+        self.input_file = data.get("input_file", self.input_file)
 
         self.output_file = self.output_folder / self.speaker_id / "output.json"
         self.skipped_file = self.output_folder / self.speaker_id / "skipped.txt"
@@ -301,7 +321,6 @@ class Recorder:
                 and (idx not in self.skipped_ids)
             )
         ]
-
         self.total_duration = self.calc_total_duration()
 
     def calc_total_duration(self) -> float:
@@ -332,7 +351,9 @@ class Recorder:
     def load_skipped_ids(self) -> None:
         if len(str(self.skipped_file)) > 0 and Path(self.skipped_file).exists():
             with open(self.skipped_file, mode="r", encoding="utf-8") as f:
-                self.skipped_ids = [line.strip() for line in f.readlines()]
+                self.skipped_ids = [
+                    line.strip() for line in f.readlines() if line.strip()
+                ]
         else:
             self.skipped_ids = []
 
@@ -371,8 +392,8 @@ class Recorder:
 
         self.output_data.append(sample)
 
-        if not Path(self.skipped_file).parent.exists():
-            Path(self.skipped_file).parent.mkdir(parents=True, exist_ok=True)
+        if not Path(self.output_file).parent.exists():
+            Path(self.output_file).parent.mkdir(parents=True, exist_ok=True)
 
         with open(self.output_file, mode="w", encoding="utf-8") as f:
             json.dump(self.output_data, f, ensure_ascii=False, indent=4)

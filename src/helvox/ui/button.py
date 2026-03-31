@@ -29,6 +29,7 @@ class RoundedButton(tk.Canvas):
         self.corner_radius = corner_radius
         self.text = text
         self.dot = dot
+        self.state = "normal"
 
         # Draw the button
         self.draw_button()
@@ -42,7 +43,12 @@ class RoundedButton(tk.Canvas):
         self.delete("all")
 
         # Slightly lighter color on hover
-        current_bg = self._adjust_color(self.bg_color, 30) if hover else self.bg_color
+        if self.state == "disabled":
+            current_bg = "#C7C7C7"
+            current_fg = "#7A7A7A"
+        else:
+            current_bg = self._adjust_color(self.bg_color, 30) if hover else self.bg_color
+            current_fg = self.fg_color
 
         # Draw rounded rectangle
         width = self.winfo_reqwidth()
@@ -98,7 +104,7 @@ class RoundedButton(tk.Canvas):
             text_x,
             height // 2,
             text=self.text,
-            fill=self.fg_color,
+            fill=current_fg,
             font=("Arial", 10, "bold"),
         )
 
@@ -110,10 +116,14 @@ class RoundedButton(tk.Canvas):
         return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
 
     def _on_click(self, event):
+        if self.state == "disabled":
+            return
         if self.command:
             self.command()
 
     def _on_enter(self, event):
+        if self.state == "disabled":
+            return
         self.draw_button(hover=True)
 
     def _on_leave(self, event):
@@ -129,9 +139,14 @@ class RoundedButton(tk.Canvas):
             self.fg_color = kwargs["fg_color"]
         if "dot" in kwargs:
             self.dot = kwargs["dot"]
+        if "state" in kwargs:
+            self.state = kwargs["state"]
 
         # Redraw the button with new settings
         self.draw_button()
+
+    def set_state(self, state: str) -> None:
+        self.update_button(state=state)
 
     config = update_button
     configure = update_button
