@@ -605,7 +605,19 @@ class App:
             return sample["ch"]
         return sample[f"ch_{self.recorder.speaker_dialect.lower()}"]
 
-    def _apply_sample_fields(self) -> None:
+    def _reload_saved_audio_into_buffers(self) -> None:
+        """Reload FLAC for current_id after save() cleared in-memory audio (needed for waveform + next save)."""
+        if not self.current_id:
+            return
+        id_str = str(self.current_id)
+        self.recorder.load_saved_clip_for_sample(id_str)
+        if self.recorder.full_audio is None:
+            self.clear_waveform_canvas()
+        else:
+            self.update_waveform()
+
+    def _sync_ui_for_current_sample(self) -> None:
+        """Load DE/CH text, thumbs, saved clip, waveforms, progress, and nav for current_id (e.g. after navigation)."""
         if not self.current_id:
             return
 
@@ -624,12 +636,7 @@ class App:
             self._thumb_choice = "up"
         self._sync_thumb_buttons()
 
-        self.recorder.load_saved_clip_for_sample(id_str)
-        if self.recorder.full_audio is None:
-            self.clear_waveform_canvas()
-        else:
-            self.update_waveform()
-
+        self._reload_saved_audio_into_buffers()
         self.update_progress()
         self.update_navigation_controls()
 
@@ -639,7 +646,7 @@ class App:
             self.show_done_state()
             return
 
-        self._apply_sample_fields()
+        self._sync_ui_for_current_sample()
 
     def show_done_state(self) -> None:
         self.current_id = None
@@ -676,7 +683,7 @@ class App:
                 line_no = ids_ordered.index(str(self.current_id)) + 1
             except ValueError:
                 line_no = 0
-            self.progress_text.set(f"Line {line_no} / {total_count}")
+            self.progress_text.set(f"Progress: {line_no} / {total_count}")
             self.progress_bar["maximum"] = total_count
             self.progress_bar["value"] = line_no
         else:
@@ -787,7 +794,13 @@ class App:
         self.clear_waveform_canvas()
 
         self.update_duration()
-        self.load_next_sample()
+        if self.recorder.open_ids:
+            self.load_next_sample()
+        else:
+            # current_id unchanged; save() cleared buffers — reload clip so Save works and Previous stays usable
+            self._reload_saved_audio_into_buffers()
+            self.update_progress()
+            self.update_navigation_controls()
         self.recorder.save_settings(self.settings_path)
 
     def go_previous(self) -> None:
@@ -805,7 +818,7 @@ class App:
             self.recorder.remove_skip(prev_id)
 
         self.current_id = prev_id
-        self._apply_sample_fields()
+        self._sync_ui_for_current_sample()
 
     def skip(self):
         if self.current_id is None or not self.recorder.enable_skip:
