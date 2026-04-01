@@ -9,6 +9,7 @@ import soundfile as sf
 from sounddevice import CallbackFlags
 
 from helvox.utils.data import read_dataset
+from helvox.utils.platform import recordings_dir
 from helvox.utils.trim import trim_silence
 
 
@@ -38,6 +39,7 @@ class Recorder:
         self.speaker_dialect = "AG"
         self.enable_skip = False
         self.input_file = ""
+        self.config_portable = False
         self.output_file = ""
         self.skipped_file = ""
 
@@ -294,6 +296,7 @@ class Recorder:
             config_path.parent.mkdir(parents=True, exist_ok=True)
 
         payload = {
+            "config_portable": self.config_portable,
             "output_folder": str(self.output_folder),
             "selected_device": self.selected_device,
             "speaker_id": self.speaker_id,
@@ -310,6 +313,8 @@ class Recorder:
         config.read(ini_path)
         settings = config["Settings"]
         return {
+            "config_portable": settings.get("config_portable", "false").lower()
+            in ("1", "true", "yes", "on"),
             "output_folder": settings.get("output_folder", str(self.output_folder)),
             "selected_device": settings.get("selected_device", self.selected_device),
             "speaker_id": settings.get("speaker_id", self.speaker_id),
@@ -320,7 +325,12 @@ class Recorder:
             "input_file": settings.get("input_file", self.input_file),
         }
 
-    def load_settings(self, config_path: Path) -> None:
+    def load_settings(
+        self,
+        config_path: Path,
+        *,
+        default_config_portable: bool | None = None,
+    ) -> None:
         data = None
         if config_path.exists():
             with open(config_path, encoding="utf-8") as f:
@@ -333,7 +343,14 @@ class Recorder:
         if not data:
             return
 
-        self.output_folder = Path(data.get("output_folder", str(self.output_folder)))
+        if "config_portable" in data:
+            self.config_portable = bool(data["config_portable"])
+        elif default_config_portable is not None:
+            self.config_portable = default_config_portable
+        else:
+            self.config_portable = False
+
+        self.output_folder = recordings_dir()
         self.selected_device = data.get("selected_device", self.selected_device)
         self.speaker_id = data.get("speaker_id", self.speaker_id)
         self.speaker_dialect = data.get("speaker_dialect", self.speaker_dialect)

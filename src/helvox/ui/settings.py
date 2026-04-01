@@ -4,8 +4,9 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from helvox.ui.tooltip import add_tooltip
+from helvox.utils.config_paths import portable_config_file, user_config_file
 from helvox.utils.data import validate_samples_for_dialect
-from helvox.utils.platform import app_font
+from helvox.utils.platform import app_font, recordings_dir
 from helvox.utils.recorder import Recorder
 
 
@@ -17,7 +18,7 @@ class SettingsDialog:
         # Create modal dialog
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("Settings")
-        self.dialog.geometry("650x550")
+        self.dialog.geometry("650x580")
         self.dialog.resizable(False, False)
 
         self.dialog.transient(parent)
@@ -174,8 +175,55 @@ class SettingsDialog:
         )
         info_label.grid(row=1, column=0, sticky="w", pady=(5, 0))
 
+        # Recordings (fixed next to app / repo root)
+        rec_frame = ttk.LabelFrame(tab_data, text="Recordings folder", padding="15")
+        rec_frame.grid(row=1, column=0, sticky="ew", padx=(10, 10), pady=(10, 0))
+        rec_frame.columnconfigure(0, weight=1)
+
+        self._recordings_path = str(recordings_dir())
+        rec_path_label = ttk.Label(
+            rec_frame,
+            text=self._recordings_path,
+            wraplength=500,
+            relief="sunken",
+            background="white",
+            foreground="#333",
+            font=app_font(9),
+            padding=5,
+        )
+        rec_path_label.grid(row=0, column=0, sticky="ew")
+
+        ttk.Label(
+            rec_frame,
+            text="Fixed: helvox folder next to the application.",
+            style="Info.TLabel",
+        ).grid(row=1, column=0, sticky="w", pady=(5, 0))
+
+        # Settings file: portable vs user profile
+        settings_store_frame = ttk.LabelFrame(
+            tab_data, text="Settings file (config.json)", padding="15"
+        )
+        settings_store_frame.grid(row=2, column=0, sticky="ew", padx=(10, 10), pady=(10, 0))
+        settings_store_frame.columnconfigure(0, weight=1)
+
+        self.config_portable_var = tk.BooleanVar(value=self.recorder.config_portable)
+        portable_check = ttk.Checkbutton(
+            settings_store_frame,
+            text="Save config.json next to the app (in the helvox folder)",
+            variable=self.config_portable_var,
+        )
+        portable_check.grid(row=0, column=0, sticky="w")
+
+        ttk.Label(
+            settings_store_frame,
+            text=f"Next to app:\n{portable_config_file()}\n\nUser profile:\n{user_config_file()}",
+            style="Info.TLabel",
+            wraplength=520,
+            justify="left",
+        ).grid(row=1, column=0, sticky="w", pady=(8, 0))
+
         options_frame = ttk.LabelFrame(tab_data, text="Options", padding="15")
-        options_frame.grid(row=2, column=0, sticky="ew", padx=(10, 10), pady=(10, 0))
+        options_frame.grid(row=3, column=0, sticky="ew", padx=(10, 10), pady=(10, 0))
         options_frame.columnconfigure(0, weight=1)
 
         self.enable_skip_var = tk.BooleanVar(value=self.recorder.enable_skip)
@@ -185,43 +233,6 @@ class SettingsDialog:
             variable=self.enable_skip_var,
         )
         enable_skip_check.grid(row=0, column=0, sticky="w")
-
-        # Output Folder Selection
-        folder_frame = ttk.LabelFrame(tab_data, text="Output Folder", padding="15")
-        folder_frame.grid(row=1, column=0, sticky="ew", padx=(10, 10), pady=(10, 0))
-        folder_frame.columnconfigure(0, weight=1)
-
-        # Folder path display
-        folder_display_frame = ttk.Frame(folder_frame)
-        folder_display_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        folder_display_frame.columnconfigure(0, weight=1)
-
-        self.folder_var = tk.StringVar(value=str(self.recorder.output_folder))
-        output_folder_label = ttk.Label(
-            folder_display_frame,
-            textvariable=self.folder_var,
-            wraplength=500,
-            relief="sunken",
-            background="white",
-            foreground="#333",
-            font=app_font(9),
-            padding=5,
-        )
-        output_folder_label.grid(row=0, column=0, sticky="ew")
-
-        # Browse button
-        browse_btn = ttk.Button(
-            folder_frame, text="Browse...", command=self.select_folder, width=12
-        )
-        browse_btn.grid(row=0, column=1, pady=(0, 0), sticky="e")
-
-        # Info label
-        info_label = ttk.Label(
-            folder_frame,
-            text="Select the folder where the audio recordings should be saved",
-            style="Info.TLabel",
-        )
-        info_label.grid(row=1, column=0, sticky="w", pady=(5, 0))
 
         # Audio Device Selection
         device_frame = ttk.LabelFrame(
@@ -303,12 +314,12 @@ class SettingsDialog:
         )
         add_tooltip(browse_file_btn, "Choose the input JSON file.")
         add_tooltip(
-            output_folder_label,
-            "Base folder for recordings and output files.",
+            rec_path_label,
+            "Audio and output.json are stored under this fixed helvox folder.",
         )
         add_tooltip(
-            browse_btn,
-            "Choose the output folder.",
+            portable_check,
+            "Checked: config in helvox next to the exe. Unchecked: OS user config directory.",
         )
         add_tooltip(
             enable_skip_check,
@@ -321,14 +332,6 @@ class SettingsDialog:
         add_tooltip(refresh_btn, "Reload audio devices.")
         add_tooltip(cancel_btn, "Close without saving changes.")
         add_tooltip(ok_btn, "Save and apply these settings.")
-
-    def select_folder(self) -> None:
-        """Open folder selection dialog."""
-        folder = filedialog.askdirectory(
-            title="Select Output Folder", initialdir=self.recorder.output_folder
-        )
-        if folder:
-            self.folder_var.set(str(Path(folder)))
 
     def select_file(self) -> None:
         file = filedialog.askopenfilename(
@@ -362,11 +365,12 @@ class SettingsDialog:
             self.speaker_input.focus_set()
             return False
 
-        folder_path = Path(self.folder_var.get())
-        if not folder_path.exists():
+        try:
+            recordings_dir().mkdir(parents=True, exist_ok=True)
+        except OSError as e:
             messagebox.showwarning(
-                "Invalid Folder",
-                "The selected output folder does not exist.",
+                "Recordings folder",
+                f"Cannot create the helvox recordings folder:\n{e}",
                 parent=self.dialog,
             )
             return False
@@ -424,7 +428,7 @@ class SettingsDialog:
         self.result = {
             "speaker_id": self.speaker_var.get().strip(),
             "speaker_dialect": self.dialect_var.get(),
-            "output_folder": self.folder_var.get(),
+            "config_portable": self.config_portable_var.get(),
             "device": self.device_var.get(),
             "enable_skip": self.enable_skip_var.get(),
             "input_file": self.file_var.get(),

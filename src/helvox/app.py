@@ -2,14 +2,19 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
 
-from platformdirs import user_config_path
-
 from helvox.ui.auto_resize_text import AutoResizingText
 from helvox.ui.button import RoundedButton
 from helvox.ui.rounded_canvas import RoundedCanvas
 from helvox.ui.settings import SettingsDialog
 from helvox.ui.tooltip import add_tooltip
-from helvox.utils.platform import app_font, default_recordings_dir
+from helvox.utils.config_paths import (
+    has_any_config_file,
+    portable_config_file,
+    prune_other_config,
+    resolve_startup_settings_path,
+    user_config_file,
+)
+from helvox.utils.platform import app_font, recordings_dir
 from helvox.utils.recorder import Recorder
 
 
@@ -18,13 +23,14 @@ class App:
         self.root = root
 
         self.recorder = Recorder(
-            output_folder=default_recordings_dir(), sample_rate=48000, channels=1
+            output_folder=recordings_dir(), sample_rate=48000, channels=1
         )
 
-        self.settings_path = (
-            user_config_path(appname="helvox", appauthor="noxenum") / "config.json"
+        self.settings_path, default_portable = resolve_startup_settings_path()
+        self.recorder.load_settings(
+            self.settings_path,
+            default_config_portable=default_portable,
         )
-        self.recorder.load_settings(self.settings_path)
 
         self.setup_window()
         self.setup_ui()
@@ -417,17 +423,33 @@ class App:
         self._thumb_btn_w = 40
         self._thumb_btn_h = 40
 
+    def _persist_settings(self) -> None:
+        self.settings_path = (
+            portable_config_file()
+            if self.recorder.config_portable
+            else user_config_file()
+        ).resolve()
+        self.recorder.save_settings(self.settings_path)
+        prune_other_config(self.settings_path)
+
     def _apply_settings_result(self, result: dict) -> None:
         before = self._recorder_identity()
 
-        self.recorder.update_output_folder(result["output_folder"])
+        self.recorder.config_portable = result["config_portable"]
+        self.recorder.update_output_folder(recordings_dir())
+        self.settings_path = (
+            portable_config_file()
+            if self.recorder.config_portable
+            else user_config_file()
+        )
+
         self.recorder.update_selected_device(result["device"])
         self.recorder.speaker_id = result["speaker_id"]
         self.recorder.speaker_dialect = result["speaker_dialect"]
         self.recorder.enable_skip = result.get("enable_skip", False)
         self.recorder.input_file = result["input_file"]
 
-        speaker_dir = Path(result["output_folder"]) / result["speaker_id"]
+        speaker_dir = recordings_dir() / result["speaker_id"]
         self.recorder.output_file = speaker_dir / "output.json"
         self.recorder.skipped_file = speaker_dir / "skipped.txt"
 
@@ -441,14 +463,12 @@ class App:
 
         if result:
             self._apply_settings_result(result)
-            self.recorder.save_settings(self.settings_path)
+            self._persist_settings()
 
         self._refresh_ui_after_session_change()
 
     def _has_saved_config(self) -> bool:
-        return self.settings_path.exists() or self.settings_path.with_suffix(
-            ".ini"
-        ).exists()
+        return has_any_config_file()
 
     def _refresh_ui_after_session_change(self) -> None:
         self.recorder.refresh_audio_devices()
@@ -801,7 +821,7 @@ class App:
             self._reload_saved_audio_into_buffers()
             self.update_progress()
             self.update_navigation_controls()
-        self.recorder.save_settings(self.settings_path)
+        self._persist_settings()
 
     def go_previous(self) -> None:
         if self.current_id is None:
@@ -826,10 +846,10 @@ class App:
 
         self.recorder.add_skip(self.current_id)
         self.load_next_sample()
-        self.recorder.save_settings(self.settings_path)
+        self._persist_settings()
 
     def on_closing(self) -> None:
-        self.recorder.save_settings(self.settings_path)
+        self._persist_settings()
         self.recorder.stop_monitoring()
         if self.recorder.recording:
             self.recorder.stop_recording()
