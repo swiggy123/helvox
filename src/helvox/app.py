@@ -436,7 +436,7 @@ class App:
         before = self._recorder_identity()
 
         self.recorder.config_portable = result["config_portable"]
-        self.recorder.update_output_folder(recordings_dir())
+        self.recorder.update_output_folder(result["output_folder"])
         self.settings_path = (
             portable_config_file()
             if self.recorder.config_portable
@@ -449,7 +449,7 @@ class App:
         self.recorder.enable_skip = result.get("enable_skip", False)
         self.recorder.input_file = result["input_file"]
 
-        speaker_dir = recordings_dir() / result["speaker_id"]
+        speaker_dir = Path(result["output_folder"]) / result["speaker_id"]
         self.recorder.output_file = speaker_dir / "output.json"
         self.recorder.skipped_file = speaker_dir / "skipped.txt"
 

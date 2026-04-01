@@ -350,7 +350,10 @@ class Recorder:
         else:
             self.config_portable = False
 
-        self.output_folder = recordings_dir()
+        of = (data.get("output_folder") or "").strip()
+        self.output_folder = (
+            Path(of).expanduser().resolve() if of else recordings_dir()
+        )
         self.selected_device = data.get("selected_device", self.selected_device)
         self.speaker_id = data.get("speaker_id", self.speaker_id)
         self.speaker_dialect = data.get("speaker_dialect", self.speaker_dialect)
