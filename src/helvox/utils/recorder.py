@@ -51,6 +51,8 @@ class Recorder:
 
         self.open_ids = []
         self.total_duration = 0
+        # Last focused sample id (persisted in config.json) for restore on restart.
+        self.current_track: str | None = None
 
     def get_audio_devices(self) -> dict:
         devices = sd.query_devices()
@@ -303,6 +305,7 @@ class Recorder:
             "speaker_dialect": self.speaker_dialect,
             "enable_skip": self.enable_skip,
             "input_file": self.input_file,
+            "track": self.current_track,
         }
 
         with open(config_path, "w", encoding="utf-8") as f:
@@ -323,6 +326,7 @@ class Recorder:
                 "enable_skip", fallback=self.enable_skip
             ),
             "input_file": settings.get("input_file", self.input_file),
+            "track": settings.get("track") or None,
         }
 
     def load_settings(
@@ -359,6 +363,11 @@ class Recorder:
         self.speaker_dialect = data.get("speaker_dialect", self.speaker_dialect)
         self.enable_skip = bool(data.get("enable_skip", self.enable_skip))
         self.input_file = data.get("input_file", self.input_file)
+        raw_track = data.get("track")
+        if raw_track is None or raw_track == "":
+            self.current_track = None
+        else:
+            self.current_track = str(raw_track)
 
         self.output_file = self.output_folder / self.speaker_id / "output.json"
         self.skipped_file = self.output_folder / self.speaker_id / "skipped.txt"
@@ -379,6 +388,27 @@ class Recorder:
             )
         ]
         self.total_duration = self.calc_total_duration()
+
+    def set_current_track_queue(self, current_id: str | None) -> None:
+        """Recompute ``open_ids`` so ``current_id`` is the active line (queue after a pop)."""
+        if not self.input_data:
+            self.open_ids = []
+            return
+        pending = [
+            str(s["id"])
+            for s in self.input_data
+            if str(s["id"]) not in self.output_index
+            and str(s["id"]) not in self.skipped_ids
+        ]
+        if not current_id:
+            self.open_ids = list(pending)
+            return
+        tid = str(current_id)
+        if tid in pending:
+            idx = pending.index(tid)
+            self.open_ids = pending[idx + 1 :]
+        else:
+            self.open_ids = list(pending)
 
     def calc_total_duration(self) -> float:
         return sum(

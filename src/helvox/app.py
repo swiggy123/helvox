@@ -456,6 +456,7 @@ class App:
         if before != self._recorder_identity():
             self.recorder.load_data()
             self.current_id = None
+            self.recorder.current_track = None
 
     def show_settings(self) -> None:
         dialog = SettingsDialog(self.root, self.recorder)
@@ -472,9 +473,19 @@ class App:
 
     def _refresh_ui_after_session_change(self) -> None:
         self.recorder.refresh_audio_devices()
-        if self.current_id is None:
+        restored = False
+        if self.recorder.current_track:
+            tid = str(self.recorder.current_track)
+            if tid in self.recorder.input_index:
+                self.current_id = tid
+                self.recorder.set_current_track_queue(tid)
+                self._sync_ui_for_current_sample()
+                restored = True
+            else:
+                self.recorder.current_track = None
+        if not restored and self.current_id is None:
             self.load_next_sample()
-        else:
+        elif not restored:
             self.update_navigation_controls()
 
         self.recorder.stop_monitoring()
@@ -641,6 +652,8 @@ class App:
         if not self.current_id:
             return
 
+        self.recorder.current_track = str(self.current_id)
+
         sample = self.recorder.get_sample_by_id(self.current_id)
         text_de = sample["de"]
         text_ch = self._get_sample_ch_text(sample)
@@ -663,13 +676,26 @@ class App:
     def load_next_sample(self) -> None:
         self.current_id = self.recorder.get_next_id()
         if self.current_id is None:
-            self.show_done_state()
+            self._handle_no_next_sample()
             return
 
         self._sync_ui_for_current_sample()
+        self._persist_settings()
+
+    def _handle_no_next_sample(self) -> None:
+        """No pending lines left: show the last dataset line for review (not blank UI)."""
+        if self.recorder.input_data:
+            last_id = str(self.recorder.input_data[-1]["id"])
+            self.current_id = last_id
+            self.recorder.set_current_track_queue(last_id)
+            self._sync_ui_for_current_sample()
+        else:
+            self.show_done_state()
+        self._persist_settings()
 
     def show_done_state(self) -> None:
         self.current_id = None
+        self.recorder.current_track = None
         self.de_text_var.set("")
         self.ch_text_var.set("")
         self.ch_text_edit_var.set("")
@@ -839,6 +865,7 @@ class App:
 
         self.current_id = prev_id
         self._sync_ui_for_current_sample()
+        self._persist_settings()
 
     def skip(self):
         if self.current_id is None or not self.recorder.enable_skip:
@@ -846,7 +873,6 @@ class App:
 
         self.recorder.add_skip(self.current_id)
         self.load_next_sample()
-        self._persist_settings()
 
     def on_closing(self) -> None:
         self._persist_settings()
