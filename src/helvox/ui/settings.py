@@ -4,7 +4,6 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from helvox.ui.tooltip import add_tooltip
-from helvox.utils.config_paths import portable_config_file, user_config_file
 from helvox.utils.data import validate_samples_for_dialect
 from helvox.utils.platform import app_font, recordings_dir
 from helvox.utils.recorder import Recorder
@@ -212,32 +211,6 @@ class SettingsDialog:
         )
         portable_check.grid(row=0, column=0, sticky="w")
 
-        self.config_path_var = tk.StringVar()
-        ttk.Label(
-            settings_store_frame,
-            text="Active config path:",
-            style="Title.TLabel",
-        ).grid(row=1, column=0, sticky="w", pady=(8, 0))
-        ttk.Label(
-            settings_store_frame,
-            textvariable=self.config_path_var,
-            style="Info.TLabel",
-            wraplength=520,
-            justify="left",
-        ).grid(row=2, column=0, sticky="w", pady=(4, 0))
-
-        ttk.Label(
-            settings_store_frame,
-            text=(
-                f"Next to app:\n{portable_config_file()}\n"
-                "Portable mode stores input/output paths relative to the app when possible.\n\n"
-                f"User profile:\n{user_config_file()}"
-            ),
-            style="Info.TLabel",
-            wraplength=520,
-            justify="left",
-        ).grid(row=3, column=0, sticky="w", pady=(8, 0))
-
         options_frame = ttk.LabelFrame(tab_data, text="Options", padding="15")
         options_frame.grid(row=3, column=0, sticky="ew", padx=(10, 10), pady=(10, 0))
         options_frame.columnconfigure(0, weight=1)
@@ -354,8 +327,6 @@ class SettingsDialog:
 
     def on_config_portable_toggle(self) -> None:
         is_portable = self.config_portable_var.get()
-        active_config = portable_config_file() if is_portable else user_config_file()
-        self.config_path_var.set(str(active_config))
 
         if is_portable:
             self.folder_var.set(str(recordings_dir().resolve()))
