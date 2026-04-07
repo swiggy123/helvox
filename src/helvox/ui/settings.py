@@ -221,7 +221,11 @@ class SettingsDialog:
 
         ttk.Label(
             settings_store_frame,
-            text=f"Next to app:\n{portable_config_file()}\n\nUser profile:\n{user_config_file()}",
+            text=(
+                f"Next to app:\n{portable_config_file()}\n"
+                "Portable mode stores input/output paths relative to the app when possible.\n\n"
+                f"User profile:\n{user_config_file()}"
+            ),
             style="Info.TLabel",
             wraplength=520,
             justify="left",
@@ -325,7 +329,7 @@ class SettingsDialog:
         add_tooltip(browse_out_btn, "Choose output folder.")
         add_tooltip(
             portable_check,
-            "Checked: config in helvox next to the exe. Unchecked: OS user config directory.",
+            "Checked: config in helvox next to the exe, with portable input/output paths when possible. Unchecked: OS user config directory.",
         )
         add_tooltip(
             enable_skip_check,

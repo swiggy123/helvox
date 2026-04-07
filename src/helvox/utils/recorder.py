@@ -8,6 +8,7 @@ import sounddevice as sd
 import soundfile as sf
 from sounddevice import CallbackFlags
 
+from helvox.utils.config_paths import decode_portable_path, encode_portable_path
 from helvox.utils.data import read_dataset
 from helvox.utils.platform import recordings_dir
 from helvox.utils.trim import trim_silence
@@ -297,14 +298,27 @@ class Recorder:
         if not config_path.parent.exists():
             config_path.parent.mkdir(parents=True, exist_ok=True)
 
+        output_folder = (
+            encode_portable_path(self.output_folder)
+            if self.config_portable
+            else str(Path(self.output_folder).expanduser().resolve())
+        )
+        input_file = (
+            encode_portable_path(self.input_file)
+            if self.config_portable and str(self.input_file).strip()
+            else str(Path(self.input_file).expanduser().resolve())
+            if str(self.input_file).strip()
+            else ""
+        )
+
         payload = {
             "config_portable": self.config_portable,
-            "output_folder": str(self.output_folder),
+            "output_folder": output_folder,
             "selected_device": self.selected_device,
             "speaker_id": self.speaker_id,
             "speaker_dialect": self.speaker_dialect,
             "enable_skip": self.enable_skip,
-            "input_file": self.input_file,
+            "input_file": input_file,
             "track": self.current_track,
         }
 
@@ -356,13 +370,21 @@ class Recorder:
 
         of = (data.get("output_folder") or "").strip()
         self.output_folder = (
+            decode_portable_path(of) if of and self.config_portable else
             Path(of).expanduser().resolve() if of else recordings_dir()
         )
         self.selected_device = data.get("selected_device", self.selected_device)
         self.speaker_id = data.get("speaker_id", self.speaker_id)
         self.speaker_dialect = data.get("speaker_dialect", self.speaker_dialect)
         self.enable_skip = bool(data.get("enable_skip", self.enable_skip))
-        self.input_file = data.get("input_file", self.input_file)
+        input_file = (data.get("input_file") or "").strip()
+        self.input_file = (
+            str(decode_portable_path(input_file))
+            if input_file and self.config_portable
+            else str(Path(input_file).expanduser().resolve())
+            if input_file
+            else ""
+        )
         raw_track = data.get("track")
         if raw_track is None or raw_track == "":
             self.current_track = None

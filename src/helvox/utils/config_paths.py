@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from platformdirs import user_config_path
@@ -15,6 +16,46 @@ def user_config_file() -> Path:
 
 def portable_config_file() -> Path:
     return portable_base_dir() / "helvox" / "config.json"
+
+
+def portable_path_anchor() -> Path:
+    """Base directory used for portable path serialization."""
+    return portable_base_dir().resolve()
+
+
+def encode_portable_path(path_value: str | Path) -> str:
+    """Store paths relative to the portable app base when possible."""
+    raw = str(path_value).strip()
+    if not raw:
+        return ""
+
+    path = Path(raw).expanduser()
+    try:
+        absolute = path.resolve()
+    except OSError:
+        absolute = path.absolute()
+
+    anchor = portable_path_anchor()
+    try:
+        rel = os.path.relpath(absolute, anchor)
+    except ValueError:
+        # Windows: different drives cannot be represented as relative paths.
+        return str(absolute)
+
+    return rel
+
+
+def decode_portable_path(path_value: str | Path) -> Path:
+    """Resolve stored portable paths against the app base."""
+    raw = str(path_value).strip()
+    if not raw:
+        return portable_path_anchor()
+
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return path.resolve()
+
+    return (portable_path_anchor() / path).resolve()
 
 
 def resolve_startup_settings_path() -> tuple[Path, bool | None]:
