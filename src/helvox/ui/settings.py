@@ -149,23 +149,19 @@ class SettingsDialog:
         file_display_frame.columnconfigure(0, weight=1)
 
         self.file_var = tk.StringVar(value=str(self.recorder.input_file))
-        file_path_label = ttk.Label(
+        self.file_input = ttk.Entry(
             file_display_frame,
             textvariable=self.file_var,
-            wraplength=500,
-            relief="sunken",
-            background="white",
-            foreground="#333",
             font=app_font(9),
-            padding=5,
+            width=60,
         )
-        file_path_label.grid(row=0, column=0, sticky="ew")
+        self.file_input.grid(row=0, column=0, sticky="ew")
 
         # Browse button
-        browse_file_btn = ttk.Button(
+        self.browse_file_btn = ttk.Button(
             file_frame, text="Browse...", command=self.select_file, width=12
         )
-        browse_file_btn.grid(row=0, column=1, pady=(0, 0), sticky="e")
+        self.browse_file_btn.grid(row=0, column=1, pady=(0, 0), sticky="e")
 
         # Info label
         info_label = ttk.Label(
@@ -181,22 +177,18 @@ class SettingsDialog:
         rec_frame.columnconfigure(0, weight=1)
 
         self.folder_var = tk.StringVar(value=str(self.recorder.output_folder))
-        rec_path_label = ttk.Label(
+        self.folder_input = ttk.Entry(
             rec_frame,
             textvariable=self.folder_var,
-            wraplength=500,
-            relief="sunken",
-            background="white",
-            foreground="#333",
             font=app_font(9),
-            padding=5,
+            width=60,
         )
-        rec_path_label.grid(row=0, column=0, sticky="ew")
+        self.folder_input.grid(row=0, column=0, sticky="ew")
 
-        browse_out_btn = ttk.Button(
+        self.browse_out_btn = ttk.Button(
             rec_frame, text="Browse...", command=self.select_output_folder, width=12
         )
-        browse_out_btn.grid(row=0, column=1, pady=(0, 0), sticky="e")
+        self.browse_out_btn.grid(row=0, column=1, pady=(0, 0), sticky="e")
 
         ttk.Label(
             rec_frame,
@@ -216,8 +208,23 @@ class SettingsDialog:
             settings_store_frame,
             text="Save config.json next to the app (in the helvox folder)",
             variable=self.config_portable_var,
+            command=self.on_config_portable_toggle,
         )
         portable_check.grid(row=0, column=0, sticky="w")
+
+        self.config_path_var = tk.StringVar()
+        ttk.Label(
+            settings_store_frame,
+            text="Active config path:",
+            style="Title.TLabel",
+        ).grid(row=1, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(
+            settings_store_frame,
+            textvariable=self.config_path_var,
+            style="Info.TLabel",
+            wraplength=520,
+            justify="left",
+        ).grid(row=2, column=0, sticky="w", pady=(4, 0))
 
         ttk.Label(
             settings_store_frame,
@@ -229,7 +236,7 @@ class SettingsDialog:
             style="Info.TLabel",
             wraplength=520,
             justify="left",
-        ).grid(row=1, column=0, sticky="w", pady=(8, 0))
+        ).grid(row=3, column=0, sticky="w", pady=(8, 0))
 
         options_frame = ttk.LabelFrame(tab_data, text="Options", padding="15")
         options_frame.grid(row=3, column=0, sticky="ew", padx=(10, 10), pady=(10, 0))
@@ -318,15 +325,15 @@ class SettingsDialog:
             "Your spoken dialect.",
         )
         add_tooltip(
-            file_path_label,
+            self.file_input,
             "Input JSON with the lines to record.",
         )
-        add_tooltip(browse_file_btn, "Choose the input JSON file.")
+        add_tooltip(self.browse_file_btn, "Choose the input JSON file.")
         add_tooltip(
-            rec_path_label,
+            self.folder_input,
             "Where FLAC and output.json are stored (default: helvox next to the app).",
         )
-        add_tooltip(browse_out_btn, "Choose output folder.")
+        add_tooltip(self.browse_out_btn, "Choose output folder.")
         add_tooltip(
             portable_check,
             "Checked: config in helvox next to the exe, with portable input/output paths when possible. Unchecked: OS user config directory.",
@@ -343,10 +350,29 @@ class SettingsDialog:
         add_tooltip(cancel_btn, "Close without saving changes.")
         add_tooltip(ok_btn, "Save and apply these settings.")
 
+        self.on_config_portable_toggle()
+
+    def on_config_portable_toggle(self) -> None:
+        is_portable = self.config_portable_var.get()
+        active_config = portable_config_file() if is_portable else user_config_file()
+        self.config_path_var.set(str(active_config))
+
+        if is_portable:
+            self.folder_var.set(str(recordings_dir().resolve()))
+
+        # Keep path fields editable in both modes.
+        self.file_input.configure(state="normal")
+        self.folder_input.configure(state="normal")
+        self.browse_file_btn.configure(state="normal")
+        self.browse_out_btn.configure(state="normal")
+
     def select_output_folder(self) -> None:
         raw = self.folder_var.get().strip() or str(recordings_dir())
         initial = Path(raw)
-        initialdir = str(initial) if initial.is_dir() else str(initial.parent)
+        base = initial if initial.is_dir() else initial.parent
+        while not base.exists() and base != base.parent:
+            base = base.parent
+        initialdir = str(base if base.exists() else Path.home())
         folder = filedialog.askdirectory(
             title="Select Output Folder", initialdir=initialdir
         )
@@ -354,8 +380,18 @@ class SettingsDialog:
             self.folder_var.set(str(Path(folder)))
 
     def select_file(self) -> None:
+        current = Path(self.file_var.get().strip())
+        if current.is_file():
+            initialdir = str(current.parent)
+        elif current.is_dir():
+            initialdir = str(current)
+        else:
+            initialdir = str(Path.home())
+
         file = filedialog.askopenfilename(
-            title="Select Input File", filetypes=[("JSON files", "*.json")]
+            title="Select Input File",
+            initialdir=initialdir,
+            filetypes=[("JSON files", "*.json")],
         )
 
         if file:
