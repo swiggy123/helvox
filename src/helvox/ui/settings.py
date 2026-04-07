@@ -192,7 +192,7 @@ class SettingsDialog:
 
         ttk.Label(
             rec_frame,
-            text=f"Default: {recordings_dir()} (helvox next to the application).",
+            text="Default: next to the exe, in a helvox folder.",
             style="Info.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(5, 0))
 
