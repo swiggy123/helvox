@@ -326,12 +326,8 @@ class SettingsDialog:
         self.on_config_portable_toggle()
 
     def on_config_portable_toggle(self) -> None:
-        is_portable = self.config_portable_var.get()
-
-        if is_portable:
-            self.folder_var.set(str(recordings_dir().resolve()))
-
         # Keep path fields editable in both modes.
+        # NOTE: toggling the config location must NOT affect the output folder.
         self.file_input.configure(state="normal")
         self.folder_input.configure(state="normal")
         self.browse_file_btn.configure(state="normal")

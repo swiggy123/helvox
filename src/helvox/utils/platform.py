@@ -29,8 +29,19 @@ def portable_base_dir() -> Path:
             p = exe
             while p != p.parent:
                 if p.suffix == ".app":
-                    return p.parent
+                    parent = p.parent
+                    # macOS App Translocation: when the app is opened directly
+                    # from a DMG or quarantined location the OS runs it from a
+                    # random read-only path under /private/var/folders/.
+                    # Fall back to the user home dir so portable files land
+                    # somewhere writable and consistent.
+                    if str(parent).startswith("/private/var/folders/"):
+                        return Path.home()
+                    return parent
                 p = p.parent
+            # No .app bundle found; guard against translocation of plain binary.
+            if str(exe).startswith("/private/var/folders/"):
+                return Path.home()
         return exe.parent
     # Running from source: repository root (parent of src/)
     return Path(__file__).resolve().parents[3]
