@@ -1,6 +1,6 @@
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 from helvox.ui.auto_resize_text import AutoResizingText
 from helvox.ui.button import RoundedButton
@@ -464,7 +464,15 @@ class App:
 
         if result:
             self._apply_settings_result(result)
-            self._persist_settings()
+            try:
+                self._persist_settings()
+            except OSError as exc:
+                messagebox.showerror(
+                    "Could not save settings",
+                    f"Failed to write config file:\n{exc}\n\n"
+                    "On macOS, try moving the app out of the DMG to a local folder first.",
+                    parent=self.root,
+                )
 
         self._refresh_ui_after_session_change()
 

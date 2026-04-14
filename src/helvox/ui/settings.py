@@ -4,6 +4,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from helvox.ui.tooltip import add_tooltip
+from helvox.utils.config_paths import portable_config_file, user_config_file
 from helvox.utils.data import validate_samples_for_dialect
 from helvox.utils.platform import app_font, recordings_dir
 from helvox.utils.recorder import Recorder
@@ -170,7 +171,7 @@ class SettingsDialog:
         )
         info_label.grid(row=1, column=0, sticky="w", pady=(5, 0))
 
-        # Output / recordings folder (default: helvox next to app)
+        # Output / recordings folder — only shown/editable in non-portable mode
         rec_frame = ttk.LabelFrame(tab_data, text="Output folder (recordings)", padding="15")
         rec_frame.grid(row=1, column=0, sticky="ew", padx=(10, 10), pady=(10, 0))
         rec_frame.columnconfigure(0, weight=1)
@@ -189,15 +190,17 @@ class SettingsDialog:
         )
         self.browse_out_btn.grid(row=0, column=1, pady=(0, 0), sticky="e")
 
-        ttk.Label(
+        self.folder_info_label = ttk.Label(
             rec_frame,
-            text="Default: next to the exe, in a helvox folder.",
+            text="",
             style="Info.TLabel",
-        ).grid(row=1, column=0, sticky="w", pady=(5, 0))
+            wraplength=560,
+        )
+        self.folder_info_label.grid(row=1, column=0, sticky="w", pady=(5, 0))
 
-        # Settings file: portable vs user profile
+        # Portable mode
         settings_store_frame = ttk.LabelFrame(
-            tab_data, text="Settings file (config.json)", padding="15"
+            tab_data, text="Portable mode", padding="15"
         )
         settings_store_frame.grid(row=2, column=0, sticky="ew", padx=(10, 10), pady=(10, 0))
         settings_store_frame.columnconfigure(0, weight=1)
@@ -205,11 +208,16 @@ class SettingsDialog:
         self.config_portable_var = tk.BooleanVar(value=self.recorder.config_portable)
         portable_check = ttk.Checkbutton(
             settings_store_frame,
-            text="Save config.json next to the app (in the helvox folder)",
+            text="Portable — store config and recordings in helvox/ next to the app",
             variable=self.config_portable_var,
             command=self.on_config_portable_toggle,
         )
         portable_check.grid(row=0, column=0, sticky="w")
+
+        self.config_path_label = ttk.Label(
+            settings_store_frame, text="", style="Info.TLabel", wraplength=560
+        )
+        self.config_path_label.grid(row=1, column=0, sticky="w", pady=(4, 0))
 
         options_frame = ttk.LabelFrame(tab_data, text="Options", padding="15")
         options_frame.grid(row=3, column=0, sticky="ew", padx=(10, 10), pady=(10, 0))
@@ -326,12 +334,31 @@ class SettingsDialog:
         self.on_config_portable_toggle()
 
     def on_config_portable_toggle(self) -> None:
-        # Keep path fields editable in both modes.
-        # NOTE: toggling the config location must NOT affect the output folder.
+        is_portable = self.config_portable_var.get()
+
+        if is_portable:
+            # Lock output folder to helvox/ next to the app.
+            base = recordings_dir()
+            self.folder_var.set(str(base))
+            self.folder_input.configure(state="disabled")
+            self.browse_out_btn.configure(state="disabled")
+            self.folder_info_label.configure(
+                text=f"Locked to: {base}  (recordings go in <speaker>/ inside)"
+            )
+            self.config_path_label.configure(
+                text=f"Config:  {portable_config_file()}\n"
+                     f"Recordings:  {base / '<speaker_id>'}"
+            )
+        else:
+            self.folder_input.configure(state="normal")
+            self.browse_out_btn.configure(state="normal")
+            self.folder_info_label.configure(text="")
+            self.config_path_label.configure(
+                text=f"Config will be saved to: {user_config_file()}"
+            )
+
         self.file_input.configure(state="normal")
-        self.folder_input.configure(state="normal")
         self.browse_file_btn.configure(state="normal")
-        self.browse_out_btn.configure(state="normal")
 
     def select_output_folder(self) -> None:
         raw = self.folder_var.get().strip() or str(recordings_dir())
@@ -449,12 +476,18 @@ class SettingsDialog:
         if not self.validate_inputs():
             return
 
-        out_folder = self.folder_var.get().strip() or str(recordings_dir())
+        is_portable = self.config_portable_var.get()
+        # In portable mode the output folder is always recordings_dir() — locked.
+        out_folder = (
+            str(recordings_dir())
+            if is_portable
+            else self.folder_var.get().strip() or str(recordings_dir())
+        )
         self.result = {
             "speaker_id": self.speaker_var.get().strip(),
             "speaker_dialect": self.dialect_var.get(),
             "output_folder": out_folder,
-            "config_portable": self.config_portable_var.get(),
+            "config_portable": is_portable,
             "device": self.device_var.get(),
             "enable_skip": self.enable_skip_var.get(),
             "input_file": self.file_var.get(),
