@@ -19,7 +19,8 @@ class SettingsDialog:
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("Settings")
         self.dialog.geometry("650x580")
-        self.dialog.resizable(False, False)
+        self.dialog.minsize(650, 580)
+        self.dialog.resizable(True, True)
 
         self.dialog.transient(parent)
 
