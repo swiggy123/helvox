@@ -1,3 +1,5 @@
+import ctypes
+import ctypes.util
 import os
 import platform
 import sys
@@ -66,6 +68,92 @@ def _best_exe_path() -> Path:
     return Path(sys.executable).resolve()
 
 
+def _macos_detranslocate(app_bundle: Path) -> Path | None:
+    """
+    Ask the macOS Security framework for the pre-translocation path of *app_bundle*.
+
+    macOS App Translocation runs a quarantined .app from a random read-only path
+    under /private/var/folders/.  The process itself cannot escape this via
+    filesystem calls alone — we must ask the Security framework for the original
+    location.  Returns None if the bundle is not translocated or the call fails.
+    """
+    try:
+        lib_cf = ctypes.cdll.LoadLibrary(
+            ctypes.util.find_library("CoreFoundation") or "CoreFoundation"
+        )
+        lib_sec = ctypes.cdll.LoadLibrary(
+            ctypes.util.find_library("Security") or "Security"
+        )
+
+        # ── CoreFoundation helpers ──────────────────────────────────────────
+        lib_cf.CFStringCreateWithCString.restype = ctypes.c_void_p
+        lib_cf.CFStringCreateWithCString.argtypes = [
+            ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32
+        ]
+        lib_cf.CFURLCreateWithFileSystemPath.restype = ctypes.c_void_p
+        lib_cf.CFURLCreateWithFileSystemPath.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long, ctypes.c_bool
+        ]
+        lib_cf.CFURLGetFileSystemRepresentation.restype = ctypes.c_bool
+        lib_cf.CFURLGetFileSystemRepresentation.argtypes = [
+            ctypes.c_void_p, ctypes.c_bool, ctypes.c_char_p, ctypes.c_long
+        ]
+        lib_cf.CFRelease.restype = None
+        lib_cf.CFRelease.argtypes = [ctypes.c_void_p]
+
+        # ── Security helpers ────────────────────────────────────────────────
+        lib_sec.SecTranslocateIsTranslocatedURL.restype = ctypes.c_bool
+        lib_sec.SecTranslocateIsTranslocatedURL.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_bool),
+            ctypes.c_void_p,
+        ]
+        lib_sec.SecTranslocateCreateOriginalPathForURL.restype = ctypes.c_void_p
+        lib_sec.SecTranslocateCreateOriginalPathForURL.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p
+        ]
+
+        kCFStringEncodingUTF8 = 0x08000100
+        kCFURLPOSIXPathStyle = 0
+
+        cf_str = lib_cf.CFStringCreateWithCString(
+            None, str(app_bundle).encode("utf-8"), kCFStringEncodingUTF8
+        )
+        if not cf_str:
+            return None
+
+        url = lib_cf.CFURLCreateWithFileSystemPath(
+            None, cf_str, kCFURLPOSIXPathStyle, True
+        )
+        lib_cf.CFRelease(cf_str)
+        if not url:
+            return None
+
+        is_translocated = ctypes.c_bool(False)
+        lib_sec.SecTranslocateIsTranslocatedURL(
+            url, ctypes.byref(is_translocated), None
+        )
+
+        if not is_translocated.value:
+            lib_cf.CFRelease(url)
+            return None  # not translocated — caller uses normal path
+
+        orig_url = lib_sec.SecTranslocateCreateOriginalPathForURL(url, None)
+        lib_cf.CFRelease(url)
+        if not orig_url:
+            return None
+
+        buf = ctypes.create_string_buffer(4096)
+        ok = lib_cf.CFURLGetFileSystemRepresentation(orig_url, True, buf, len(buf))
+        lib_cf.CFRelease(orig_url)
+
+        if ok:
+            return Path(buf.value.decode("utf-8"))
+        return None
+    except Exception:
+        return None
+
+
 def portable_base_dir() -> Path:
     """Directory next to the packaged executable / app bundle. In development: repo root."""
     if getattr(sys, "frozen", False):
@@ -77,18 +165,18 @@ def portable_base_dir() -> Path:
             while p != p.parent:
                 if p.suffix == ".app":
                     parent = p.parent
-                    # macOS App Translocation: the OS runs the .app from a
-                    # random read-only path under /private/var/folders/ when
-                    # the app is opened directly from a DMG or quarantined
-                    # location.  Fall back to home so files land somewhere
-                    # writable and consistent.
                     if str(parent).startswith("/private/var/folders/"):
-                        return Path.home()
+                        # macOS App Translocation is active — the OS is running
+                        # the app from a random read-only mirror.  Ask the
+                        # Security framework for the real pre-translocation path
+                        # so portable files land next to the actual .app.
+                        real = _macos_detranslocate(p)
+                        if real is not None:
+                            return real.parent
+                        # De-translocation failed: return whatever path we have.
+                        # The caller's error handling will surface the write failure.
                     return parent
                 p = p.parent
-            # No .app bundle — guard against a translocated plain binary.
-            if str(exe).startswith("/private/var/folders/"):
-                return Path.home()
 
         return exe.parent
 
