@@ -133,6 +133,21 @@ class SettingsDialog:
         )
         self.speaker_dialect.grid(row=1, column=1, padx=(0, 5), pady=8, sticky="w")
 
+        self.skip_enabled_var = tk.BooleanVar(value=self.recorder.skip_enabled)
+        skip_toggle = ttk.Checkbutton(
+            speaker_frame,
+            text="Enable Skip button",
+            variable=self.skip_enabled_var,
+        )
+        skip_toggle.grid(
+            row=2,
+            column=0,
+            columnspan=2,
+            padx=(0, 5),
+            pady=(4, 2),
+            sticky="w",
+        )
+
         # Input File Selection
         file_frame = ttk.LabelFrame(tab_data, text="Input File", padding="15")
         file_frame.grid(row=0, column=0, sticky="ew", padx=(10, 10), pady=(10, 0))
@@ -144,15 +159,18 @@ class SettingsDialog:
         file_display_frame.columnconfigure(0, weight=1)
 
         self.file_var = tk.StringVar(value=str(self.recorder.input_file))
-        folder_label = ttk.Label(
+        folder_label = tk.Label(
             file_display_frame,
             textvariable=self.file_var,
             wraplength=500,
             relief="sunken",
-            background="white",
-            foreground="#333",
+            background="#FFFFFF",
+            foreground="#1F1F1F",
             font=app_font(9),
-            padding=5,
+            padx=6,
+            pady=4,
+            anchor="w",
+            justify="left",
         )
         folder_label.grid(row=0, column=0, sticky="ew")
 
@@ -181,15 +199,18 @@ class SettingsDialog:
         folder_display_frame.columnconfigure(0, weight=1)
 
         self.folder_var = tk.StringVar(value=str(self.recorder.output_folder))
-        folder_label = ttk.Label(
+        folder_label = tk.Label(
             folder_display_frame,
             textvariable=self.folder_var,
             wraplength=500,
             relief="sunken",
-            background="white",
-            foreground="#333",
+            background="#FFFFFF",
+            foreground="#1F1F1F",
             font=app_font(9),
-            padding=5,
+            padx=6,
+            pady=4,
+            anchor="w",
+            justify="left",
         )
         folder_label.grid(row=0, column=0, sticky="ew")
 
@@ -323,6 +344,15 @@ class SettingsDialog:
             )
             return False
 
+        input_file_path = Path(self.file_var.get())
+        if not input_file_path.exists() or input_file_path.suffix.lower() != ".json":
+            messagebox.showwarning(
+                "Invalid Input File",
+                "Please select a valid JSON input file.",
+                parent=self.dialog,
+            )
+            return False
+
         if not self.device_var.get():
             messagebox.showwarning(
                 "No Device Selected",
@@ -345,6 +375,7 @@ class SettingsDialog:
             "output_folder": self.folder_var.get(),
             "device": self.device_var.get(),
             "input_file": self.file_var.get(),
+            "skip_enabled": self.skip_enabled_var.get(),
         }
         self.dialog.destroy()
 

@@ -1,6 +1,6 @@
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 from platformdirs import user_config_path
 
@@ -23,6 +23,9 @@ class App:
         self.settings_path = (
             user_config_path(appname="helvox", appauthor="noxenum") / "config.ini"
         )
+        self.current_id: str | None = None
+        self.previous_ids: list[str] = []
+        self.current_rating: str | None = None
 
         self.setup_window()
         self.setup_ui()
@@ -32,7 +35,7 @@ class App:
 
     def setup_window(self) -> None:
         self.root.title("Helvox")
-        self.root.geometry("800x600")
+        self.root.geometry("900x700")
 
         # Set minimum window size
         self.root.minsize(900, 700)
@@ -45,8 +48,23 @@ class App:
 
         # Bind configure event
         self.root.bind("<Configure>", self.configure_handler)
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def setup_styles(self) -> None:
+        """Use a predictable ttk theme so macOS and Windows look/behave alike."""
+        style = ttk.Style(self.root)
+
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+
+        style.configure("TLabel", font=app_font(10), foreground="#1F1F1F")
+        style.configure("TLabelframe.Label", font=app_font(10, bold=True))
 
     def setup_ui(self) -> None:
+        self.setup_styles()
+
         # Main frame
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.grid(row=0, column=0, sticky="nswe")
@@ -87,15 +105,17 @@ class App:
         ttk.Label(de_text_frame, text="DE:").grid(row=0, column=0, sticky=tk.W, padx=0)
 
         self.de_text_var = tk.StringVar(value="")
-        de_text_label = ttk.Label(
+        de_text_label = tk.Label(
             de_text_frame,
             textvariable=self.de_text_var,
             relief="sunken",
-            background="white",
-            foreground="#8A8A8A",
+            background="#FFFFFF",
+            foreground="#1F1F1F",
             font=app_font(12),
-            padding=5,
+            padx=6,
+            pady=5,
             anchor="w",
+            justify="left",
         )
         de_text_label.grid(row=1, column=0, sticky="ew")
 
@@ -115,15 +135,17 @@ class App:
         )
 
         self.ch_text_var = tk.StringVar(value="")
-        ch_text_label = ttk.Label(
+        ch_text_label = tk.Label(
             ch_text_frame,
             textvariable=self.ch_text_var,
             relief="sunken",
-            background="white",
-            foreground="#8A8A8A",
+            background="#FFFFFF",
+            foreground="#1F1F1F",
             font=app_font(12),
-            padding=5,
+            padx=6,
+            pady=5,
             anchor="w",
+            justify="left",
         )
         ch_text_label.grid(row=1, column=0, sticky="ew")
 
@@ -251,8 +273,23 @@ class App:
             row=0, column=0, sticky=tk.W, padx=5
         )
 
-        # Skip button at the bottom
-        settings_btn = RoundedButton(
+        # Previous button
+        self.previous_btn = RoundedButton(
+            control_frame,
+            text="Previous",
+            command=self.previous_sample,
+            bg_color="#E6E6E6",
+            fg_color="#363636",
+            width=120,
+            height=40,
+            corner_radius=20,
+            dot=False,
+            enabled=False,
+        )
+        self.previous_btn.grid(row=0, column=1, padx=5, sticky="e")
+
+        # Skip button
+        self.skip_btn = RoundedButton(
             control_frame,
             text="Skip",
             command=self.skip,
@@ -263,10 +300,37 @@ class App:
             corner_radius=20,
             dot=False,
         )
-        settings_btn.grid(row=0, column=1, padx=5, sticky="e")
+        self.skip_btn.grid(row=0, column=2, padx=5, sticky="e")
+
+        # Thumb buttons
+        self.thumb_down_btn = RoundedButton(
+            control_frame,
+            text="Thumb Down",
+            command=lambda: self.set_rating("down"),
+            bg_color="#E6E6E6",
+            fg_color="#363636",
+            width=120,
+            height=40,
+            corner_radius=20,
+            dot=False,
+        )
+        self.thumb_down_btn.grid(row=0, column=3, padx=5, sticky="e")
+
+        self.thumb_up_btn = RoundedButton(
+            control_frame,
+            text="Thumb Up",
+            command=lambda: self.set_rating("up"),
+            bg_color="#E6E6E6",
+            fg_color="#363636",
+            width=120,
+            height=40,
+            corner_radius=20,
+            dot=False,
+        )
+        self.thumb_up_btn.grid(row=0, column=4, padx=5, sticky="e")
 
         # Next button at the bottom
-        settings_btn = RoundedButton(
+        self.save_btn = RoundedButton(
             control_frame,
             text="Save & Next",
             command=self.save,
@@ -277,7 +341,11 @@ class App:
             corner_radius=20,
             dot=False,
         )
-        settings_btn.grid(row=0, column=2, padx=5, sticky="e")
+        self.save_btn.grid(row=0, column=5, padx=5, sticky="e")
+
+        self.update_skip_button_state()
+        self.update_rating_buttons()
+        self.update_previous_button_state()
 
     def show_settings(self) -> None:
         self.recorder.load_settings(self.settings_path)
@@ -290,6 +358,7 @@ class App:
             self.recorder.update_selected_device(result["device"])
             self.recorder.speaker_id = result["speaker_id"]
             self.recorder.speaker_dialect = result["speaker_dialect"]
+            self.recorder.skip_enabled = bool(result["skip_enabled"])
             self.recorder.input_file = result["input_file"]
             self.recorder.output_file = (
                 Path(result["output_folder"]) / result["speaker_id"] / "output.json"
@@ -298,13 +367,104 @@ class App:
                 Path(result["output_folder"]) / result["speaker_id"] / "skipped.txt"
             )
 
+            self.current_id = None
+            self.previous_ids = []
+            self.current_rating = None
+
             self.recorder.save_settings(self.settings_path)
             self.recorder.load_data()
+
+            if not self.recorder.input_data:
+                messagebox.showwarning(
+                    "No Input Data",
+                    "No samples loaded. Please verify your JSON file and selected dialect in Settings.",
+                    parent=self.root,
+                )
 
         self.start_monitoring()
         self.load_next_sample()
 
         self.update_duration()
+        self.update_skip_button_state()
+        self.update_previous_button_state()
+
+    def set_empty_sample_state(self, message: str = "") -> None:
+        self.de_text_var.set(message)
+        self.ch_text_var.set("")
+        self.ch_text_edit_var.set("")
+        self.current_rating = None
+        self.update_rating_buttons()
+        self.update_skip_button_state()
+        self.update_previous_button_state()
+
+    def update_skip_button_state(self) -> None:
+        feature_enabled = bool(self.recorder.skip_enabled)
+        button_enabled = bool(feature_enabled and self.current_id)
+        button_text = "Skip" if feature_enabled else "Skip Off"
+        self.skip_btn.config(text=button_text, enabled=button_enabled)
+
+    def update_previous_button_state(self) -> None:
+        self.previous_btn.config(enabled=bool(self.previous_ids))
+        self.save_btn.config(enabled=bool(self.current_id))
+
+    def set_rating(self, rating: str) -> None:
+        if rating not in {"up", "down"}:
+            self.current_rating = None
+        elif self.current_rating == rating:
+            self.current_rating = None
+        else:
+            self.current_rating = rating
+
+        self.update_rating_buttons()
+
+    def update_rating_buttons(self) -> None:
+        has_current = bool(self.current_id)
+        is_up = self.current_rating == "up"
+        is_down = self.current_rating == "down"
+
+        self.thumb_up_btn.config(
+            enabled=has_current,
+            bg_color="#1E8E3E" if is_up else "#E6E6E6",
+            fg_color="#FFFFFF" if is_up else "#363636",
+        )
+        self.thumb_down_btn.config(
+            enabled=has_current,
+            bg_color="#B3261E" if is_down else "#E6E6E6",
+            fg_color="#FFFFFF" if is_down else "#363636",
+        )
+
+    def load_sample_by_id(self, sample_id: str) -> bool:
+        sample = self.recorder.get_sample_by_id(sample_id)
+
+        if not sample:
+            self.current_id = None
+            self.set_empty_sample_state(f"Sample {sample_id} could not be loaded.")
+            return False
+
+        text_de = str(sample.get("de", ""))
+        if "ch" in sample:
+            text_ch = str(sample.get("ch", ""))
+        else:
+            text_ch = str(sample.get(f"ch_{self.recorder.speaker_dialect.lower()}", ""))
+
+        if not text_de and not text_ch:
+            self.current_id = None
+            self.set_empty_sample_state(
+                f"Sample {sample_id} has no text fields for DE/CH."
+            )
+            return False
+
+        self.current_id = sample_id
+        self.de_text_var.set(text_de)
+        self.ch_text_var.set(text_ch)
+        self.ch_text_edit_var.set(text_ch)
+
+        rating = sample.get("rating")
+        self.current_rating = rating if rating in {"up", "down"} else None
+        self.update_rating_buttons()
+        self.update_skip_button_state()
+        self.update_previous_button_state()
+        return True
 
     def update_duration(self) -> None:
         total_seconds = self.recorder.total_duration
@@ -411,21 +571,41 @@ class App:
         self.waveform_canvas_trimmed.draw_canvas()
 
     def load_next_sample(self) -> None:
-        self.current_id = self.recorder.get_next_id()
-        if self.current_id is None:
+        if self.current_id:
+            self.previous_ids.append(self.current_id)
+
+        next_id = self.recorder.get_next_id()
+        if next_id is None:
+            self.current_id = None
+            self.set_empty_sample_state(
+                "No open samples available. Please check your input file and settings."
+            )
+            self.update_previous_button_state()
+            self.update_skip_button_state()
             return
 
-        sample = self.recorder.get_sample_by_id(self.current_id)
-        text_de = sample["de"]
+        self.load_sample_by_id(next_id)
+        self.update_previous_button_state()
 
-        if "ch" in sample:
-            text_ch = sample["ch"]
-        else:
-            text_ch = sample[f"ch_{self.recorder.speaker_dialect.lower()}"]
+    def previous_sample(self) -> None:
+        if not self.previous_ids:
+            return
 
-        self.de_text_var.set(text_de)
-        self.ch_text_var.set(text_ch)
-        self.ch_text_edit_var.set(text_ch)
+        current_id = self.current_id
+        if (
+            current_id
+            and current_id not in self.recorder.output_index
+            and current_id not in self.recorder.skipped_ids
+        ):
+            self.recorder.prepend_open_id(current_id)
+
+        previous_id = self.previous_ids.pop()
+        self.recorder.open_ids = [
+            open_id for open_id in self.recorder.open_ids if open_id != previous_id
+        ]
+        self.load_sample_by_id(previous_id)
+        self.update_previous_button_state()
+        self.update_skip_button_state()
 
     def update_waveform(self) -> None:
         if self.recorder.full_audio is None or self.recorder.trimmed_audio is None:
@@ -494,6 +674,9 @@ class App:
         self.update_waveform()
 
     def save(self) -> None:
+        if not getattr(self, "current_id", None):
+            return
+
         if self.recorder.trimmed_audio is None:
             return
 
@@ -505,6 +688,7 @@ class App:
             dialect=self.recorder.speaker_dialect,
             audio_path=f"{self.current_id}.flac",
             duration_s=duration_s,
+            rating=self.current_rating,
         )
 
         self.recorder.audio_data = []
@@ -517,6 +701,12 @@ class App:
         self.load_next_sample()
 
     def skip(self):
+        if not getattr(self, "current_id", None):
+            return
+
+        if not self.recorder.skip_enabled:
+            return
+
         self.recorder.add_skip(self.current_id)
         self.load_next_sample()
 
@@ -524,5 +714,4 @@ class App:
         self.recorder.stop_monitoring()
         if self.recorder.recording:
             self.recorder.stop_recording()
-        self.root.destroy()
         self.root.destroy()

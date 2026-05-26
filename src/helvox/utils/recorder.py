@@ -36,6 +36,7 @@ class Recorder:
         self.selected_device = ""
         self.speaker_id = "unknown"
         self.speaker_dialect = "AG"
+        self.skip_enabled = True
         self.input_file = ""
         self.output_file = ""
         self.skipped_file = ""
@@ -261,6 +262,7 @@ class Recorder:
             "selected_device": self.selected_device,
             "speaker_id": self.speaker_id,
             "speaker_dialect": self.speaker_dialect,
+            "skip_enabled": str(self.skip_enabled),
             "input_file": self.input_file,
         }
 
@@ -281,6 +283,7 @@ class Recorder:
         self.selected_device = settings.get("selected_device", self.selected_device)
         self.speaker_id = settings.get("speaker_id", self.speaker_id)
         self.speaker_dialect = settings.get("speaker_dialect", self.speaker_dialect)
+        self.skip_enabled = settings.getboolean("skip_enabled", fallback=True)
         self.input_file = settings.get("input_file", self.input_file)
 
         self.output_file = self.output_folder / self.speaker_id / "output.json"
@@ -328,6 +331,7 @@ class Recorder:
             self.output_index = {str(d["id"]): d for d in self.output_data}
         else:
             self.output_data = []
+            self.output_index = {}
 
     def load_skipped_ids(self) -> None:
         if len(str(self.skipped_file)) > 0 and Path(self.skipped_file).exists():
@@ -341,15 +345,36 @@ class Recorder:
         return self.output_index.get(id_str) or self.input_index.get(id_str) or {}
 
     def add_skip(self, id: Union[int, str]) -> None:
-        if id in self.skipped_ids:
+        id_str = str(id)
+
+        if id_str in self.skipped_ids:
             return
 
-        self.skipped_ids.append(str(id))
+        self.skipped_ids.append(id_str)
+        self.open_ids = [open_id for open_id in self.open_ids if open_id != id_str]
+
         if not Path(self.skipped_file).parent.exists():
             Path(self.skipped_file).parent.mkdir(parents=True, exist_ok=True)
 
         with open(self.skipped_file, mode="a", encoding="utf-8") as f:
-            f.write(f"{id}\n")
+            f.write(f"{id_str}\n")
+
+    def prepend_open_id(self, id: Union[int, str]) -> None:
+        id_str = str(id)
+
+        if not id_str:
+            return
+
+        if id_str not in self.input_index:
+            return
+
+        if id_str in self.open_ids:
+            return
+
+        if id_str in self.skipped_ids or id_str in self.output_index:
+            return
+
+        self.open_ids.insert(0, id_str)
 
     def add_sample(
         self,
@@ -359,9 +384,12 @@ class Recorder:
         dialect: str,
         audio_path: str,
         duration_s: float,
+        rating: Optional[str] = None,
     ) -> None:
+        id_str = str(id)
+
         sample = {
-            "id": id,
+            "id": id_str,
             "de": text_de,
             "ch": text_ch,
             "dialect": dialect.lower(),
@@ -369,7 +397,25 @@ class Recorder:
             "duration_s": duration_s,
         }
 
-        self.output_data.append(sample)
+        if rating in {"up", "down"}:
+            sample["rating"] = rating
+
+        existing_idx = next(
+            (
+                i
+                for i, existing in enumerate(self.output_data)
+                if str(existing.get("id")) == id_str
+            ),
+            None,
+        )
+
+        if existing_idx is None:
+            self.output_data.append(sample)
+        else:
+            self.output_data[existing_idx] = sample
+
+        self.output_index[id_str] = sample
+        self.open_ids = [open_id for open_id in self.open_ids if open_id != id_str]
 
         if not Path(self.skipped_file).parent.exists():
             Path(self.skipped_file).parent.mkdir(parents=True, exist_ok=True)

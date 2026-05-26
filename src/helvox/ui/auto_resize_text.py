@@ -45,7 +45,15 @@ class AutoResizingText(tk.Text):
             self._resize_height()
 
     def _resize_height(self):
-        height = self.tk.call(
+        height_raw = self.tk.call(
             (self._w, "count", "-update", "-displaylines", "1.0", "end")
         )
+
+        try:
+            height = int(height_raw)
+        except (TypeError, ValueError):
+            # Tk can occasionally return a Tcl object/string depending on platform.
+            parts = str(height_raw).split()
+            height = int(parts[0]) if parts else self.min_height
+
         self.configure(height=min(max(height, self.min_height), self.max_height))

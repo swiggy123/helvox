@@ -1,5 +1,7 @@
 import tkinter as tk
 
+from helvox.utils.platform import app_font
+
 
 class RoundedButton(tk.Canvas):
     def __init__(
@@ -13,13 +15,25 @@ class RoundedButton(tk.Canvas):
         height=50,
         corner_radius=20,
         dot=False,
+        font=None,
+        enabled=True,
+        disabled_bg_color="#C8C8C8",
+        disabled_fg_color="#6E6E6E",
     ):
+        canvas_bg = "#f0f0f0"
+        for color_key in ("bg", "background"):
+            try:
+                canvas_bg = parent.cget(color_key)
+                break
+            except tk.TclError:
+                continue
+
         tk.Canvas.__init__(
             self,
             parent,
             width=width,
             height=height,
-            bg="#f0f0f0",
+            bg=canvas_bg,
             highlightthickness=0,
         )
 
@@ -29,6 +43,10 @@ class RoundedButton(tk.Canvas):
         self.corner_radius = corner_radius
         self.text = text
         self.dot = dot
+        self.font = font or app_font(10, bold=True)
+        self.enabled = enabled
+        self.disabled_bg_color = disabled_bg_color
+        self.disabled_fg_color = disabled_fg_color
 
         # Draw the button
         self.draw_button()
@@ -37,12 +55,20 @@ class RoundedButton(tk.Canvas):
         self.bind("<Button-1>", self._on_click)
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
+        self.bind("<Configure>", lambda _: self.draw_button())
 
     def draw_button(self, hover=False):
         self.delete("all")
 
         # Slightly lighter color on hover
-        current_bg = self._adjust_color(self.bg_color, 30) if hover else self.bg_color
+        if self.enabled:
+            current_bg = (
+                self._adjust_color(self.bg_color, 30) if hover else self.bg_color
+            )
+            current_fg = self.fg_color
+        else:
+            current_bg = self.disabled_bg_color
+            current_fg = self.disabled_fg_color
 
         # Draw rounded rectangle
         width = self.winfo_reqwidth()
@@ -83,13 +109,14 @@ class RoundedButton(tk.Canvas):
         if self.dot:
             dot_x = width // 2 - 20
             dot_y = height // 2
+            dot_color = "#8B0000" if self.enabled else "#9A9A9A"
             self.create_oval(
                 dot_x - 5,
                 dot_y - 5,
                 dot_x + 5,
                 dot_y + 5,
-                fill="#8B0000",
-                outline="#8B0000",
+                fill=dot_color,
+                outline=dot_color,
             )
 
         # Draw text
@@ -98,8 +125,8 @@ class RoundedButton(tk.Canvas):
             text_x,
             height // 2,
             text=self.text,
-            fill=self.fg_color,
-            font=("Arial", 10, "bold"),
+            fill=current_fg,
+            font=self.font,
         )
 
     def _adjust_color(self, color, amount):
@@ -110,11 +137,12 @@ class RoundedButton(tk.Canvas):
         return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
 
     def _on_click(self, event):
-        if self.command:
+        if self.enabled and self.command:
             self.command()
 
     def _on_enter(self, event):
-        self.draw_button(hover=True)
+        if self.enabled:
+            self.draw_button(hover=True)
 
     def _on_leave(self, event):
         self.draw_button(hover=False)
@@ -129,6 +157,14 @@ class RoundedButton(tk.Canvas):
             self.fg_color = kwargs["fg_color"]
         if "dot" in kwargs:
             self.dot = kwargs["dot"]
+        if "font" in kwargs:
+            self.font = kwargs["font"]
+        if "enabled" in kwargs:
+            self.enabled = bool(kwargs["enabled"])
+        if "disabled_bg_color" in kwargs:
+            self.disabled_bg_color = kwargs["disabled_bg_color"]
+        if "disabled_fg_color" in kwargs:
+            self.disabled_fg_color = kwargs["disabled_fg_color"]
 
         # Redraw the button with new settings
         self.draw_button()
