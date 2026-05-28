@@ -1,5 +1,6 @@
 import configparser
 import json
+from collections import Counter
 from pathlib import Path
 from typing import Optional, Union
 
@@ -29,6 +30,8 @@ class Recorder:
         self.current_level = -60.0  # dB
         self.full_audio = None
         self.trimmed_audio = None
+        self.active_sample_rate = sample_rate
+        self.last_error = ""
 
         self.monitor_stream = None
         self.stream = None
@@ -53,15 +56,76 @@ class Recorder:
     def get_audio_devices(self) -> dict:
         devices = sd.query_devices()
         device_map = {}
+        input_device_names = [
+            str(device.get("name", "")).strip() or f"device_{idx}"
+            for idx, device in enumerate(devices)
+            if int(device.get("max_input_channels", 0)) > 0
+        ]
+        name_counts = Counter(input_device_names)
 
         for idx, device in enumerate(devices):
             if int(device.get("max_input_channels", 0)) > 0:
-                device_map[str(device.get("name", f"device_{idx}"))] = idx
+                raw_name = str(device.get("name", f"device_{idx}")).strip()
+                raw_name = raw_name or f"device_{idx}"
+                label = (
+                    f"{raw_name} ({idx})"
+                    if name_counts.get(raw_name, 0) > 1
+                    else raw_name
+                )
+                device_map[label] = idx
 
         return device_map
 
+    def _resolve_device_index(self) -> Optional[int]:
+        if self.selected_device in self.device_map:
+            return self.device_map[self.selected_device]
+
+        if not self.selected_device:
+            return None
+
+        # Backward-compatibility: existing settings may store the bare device name.
+        for label, idx in self.device_map.items():
+            if label == self.selected_device or label.startswith(
+                f"{self.selected_device} ("
+            ):
+                self.selected_device = label
+                return idx
+
+        return None
+
+    def _candidate_samplerates(self, device_idx: int) -> list[int]:
+        candidates = [int(self.sample_rate)]
+
+        try:
+            info = sd.query_devices(device_idx)
+            default_rate = int(float(info.get("default_samplerate", 0) or 0))
+            if default_rate > 0:
+                candidates.append(default_rate)
+        except Exception:
+            pass
+
+        candidates.extend([44100, 48000])
+
+        deduped: list[int] = []
+        for rate in candidates:
+            if rate > 0 and rate not in deduped:
+                deduped.append(rate)
+
+        return deduped
+
+    def _device_input_channels(self, device_idx: int) -> int:
+        try:
+            info = sd.query_devices(device_idx)
+            max_input_channels = int(info.get("max_input_channels", 0) or 0)
+            return max(1, min(self.channels, max_input_channels))
+        except Exception:
+            return self.channels
+
     def refresh_audio_devices(self) -> None:
         self.device_map = self.get_audio_devices()
+
+        if not self.selected_device and self.device_map:
+            self.selected_device = next(iter(self.device_map))
 
     def calculate_rms_db(self, audio_data: np.ndarray) -> float:
         if len(audio_data) == 0:
@@ -82,11 +146,13 @@ class Recorder:
         if self.monitoring:
             self.stop_monitoring()
 
-        device_idx = self.device_map.get(self.selected_device)
+        self.last_error = ""
+        device_idx = self._resolve_device_index()
         if device_idx is None:
             return
 
         self.monitoring = True
+        channels = self._device_input_channels(device_idx)
 
         def monitor_callback(indata: np.ndarray, frames, time, status: CallbackFlags):
             if status:
@@ -95,17 +161,22 @@ class Recorder:
             # Calculate level
             self.current_level = self.calculate_rms_db(indata)
 
-        try:
-            self.monitor_stream = sd.InputStream(
-                device=device_idx,
-                channels=self.channels,
-                samplerate=self.sample_rate,
-                callback=monitor_callback,
-            )
-            self.monitor_stream.start()
-        except Exception as e:
-            print(f"Error starting monitor stream: {e}")
-            self.monitoring = False
+        for samplerate in self._candidate_samplerates(device_idx):
+            try:
+                self.monitor_stream = sd.InputStream(
+                    device=device_idx,
+                    channels=channels,
+                    samplerate=samplerate,
+                    callback=monitor_callback,
+                )
+                self.monitor_stream.start()
+                self.active_sample_rate = samplerate
+                return
+            except Exception as e:
+                self.last_error = str(e)
+
+        print(f"Error starting monitor stream: {self.last_error}")
+        self.monitoring = False
 
     def stop_monitoring(self) -> None:
         if self.monitoring and self.monitor_stream:
@@ -122,18 +193,18 @@ class Recorder:
     def get_current_level(self) -> float:
         return self.current_level
 
-    def start_recording(self):
-        if not self.selected_device:
-            return
-
-        device_idx = self.device_map.get(self.selected_device)
+    def start_recording(self) -> bool:
+        self.last_error = ""
+        device_idx = self._resolve_device_index()
+        if device_idx is None:
+            self.last_error = "No valid input device selected."
+            return False
 
         # Stop monitoring while recording
         if self.monitoring:
             self.stop_monitoring()
 
-        self.recording = True
-        self.audio_data = []
+        channels = self._device_input_channels(device_idx)
 
         def callback(indata: np.ndarray, frames, time, status: CallbackFlags):
             if status:
@@ -143,14 +214,27 @@ class Recorder:
             # Update level during recording
             self.current_level = self.calculate_rms_db(indata)
 
-        self.stream = sd.InputStream(
-            device=device_idx,
-            channels=self.channels,
-            samplerate=self.sample_rate,
-            callback=callback,
-        )
+        for samplerate in self._candidate_samplerates(device_idx):
+            try:
+                self.recording = True
+                self.audio_data = []
+                self.stream = sd.InputStream(
+                    device=device_idx,
+                    channels=channels,
+                    samplerate=samplerate,
+                    callback=callback,
+                )
+                self.stream.start()
+                self.active_sample_rate = samplerate
+                return True
+            except Exception as e:
+                self.last_error = str(e)
+                self.recording = False
+                self.stream = None
 
-        self.stream.start()
+        # Resume monitoring when recording cannot be started.
+        self.start_monitoring()
+        return False
 
     def stop_recording(self) -> None:
         if self.recording and self.stream:
@@ -178,7 +262,7 @@ class Recorder:
         if not audio_path.parent.exists():
             audio_path.parent.mkdir(parents=True, exist_ok=True)
 
-        sf.write(audio_path, self.trimmed_audio, self.sample_rate, format="FLAC")
+        sf.write(audio_path, self.trimmed_audio, self.active_sample_rate, format="FLAC")
 
         return self.get_duration_trimmed_audio()
 
@@ -190,7 +274,7 @@ class Recorder:
 
     def play_audio_data(self, audio):
         if audio is not None:
-            sd.play(audio, self.sample_rate)
+            sd.play(audio, self.active_sample_rate)
 
     def check_playback(self) -> bool:
         return sd.get_stream().active
@@ -203,7 +287,7 @@ class Recorder:
 
     def get_duration(self, audio) -> float:
         if audio is not None:
-            return len(audio) / self.sample_rate
+            return len(audio) / self.active_sample_rate
         return 0.0
 
     def get_waveform_full_audio(self, num_points: int = 100) -> list[float]:

@@ -553,7 +553,15 @@ class App:
 
     def toggle_recording(self) -> None:
         if not self.recorder.recording:
-            self.recorder.start_recording()
+            started = self.recorder.start_recording()
+            if not started:
+                messagebox.showerror(
+                    "Recording Error",
+                    self.recorder.last_error
+                    or "Unable to start recording with the selected input device.",
+                    parent=self.root,
+                )
+                return
             self.clear_waveform_canvas()
             self.record_btn.config(
                 text="Stop Recording", bg_color="#8B0000", dot=False
